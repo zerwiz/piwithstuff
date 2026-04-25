@@ -1,0 +1,14 @@
+# CodepOS Harness - Git Ignore Patterns
+
+# Ignore pi sessions (personal chat logs)
+harness/.pi/sessions/*
+harness/.pi/sessions/!(*.md)
+
+# Ignore any other temporary files
+harness/.pi/cache/*
+harness/.pi/logs/*
+
+# Keep the config files
+harness/.pi/APPEND_SYSTEM.md
+harness/.pi/env
+harness/.pi/*.md

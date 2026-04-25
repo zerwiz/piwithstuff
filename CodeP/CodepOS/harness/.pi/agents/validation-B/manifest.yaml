@@ -1,0 +1,28 @@
+agent:
+  name: validation-B
+  team: testing
+  metadata:
+    md5:
+      pi: c3d4e5f6789012345678abcdef0123
+      ref: d4e5f6789012345678abcdef01234
+  permissions:
+    - read
+    - write
+    - validate
+  status: active
+  last_updated: 2024-01-01T00:00:00Z
+  dependencies:
+    - skill-test
+    - skill-qa
+  capabilities:
+    - automated-testing
+    - regression-tests
+    - e2e-validation
+  configuration:
+    priority: 4
+    role: tester
+    type: testing
+    stage: qa_tests
+    checks:
+      - automated-tests
+      - integration-tests

@@ -1,0 +1,35 @@
+# CodepOS Harness - Justfile for Orchestrator Team
+
+# Boot the master orchestrator AI inside the harness environment
+harness-agent:
+    @echo "Booting CodepOS Orchestrator..."
+    cd harness && pi
+
+# List available teams in the harness
+harness-list-teams:
+    @echo "📦 Available CodepOS Teams:"
+    @cd harness && list_codepos_teams
+
+# Deploy a specific team from harness
+harness-deploy: teamName
+    @cd harness && deploy_codepos_team teamName={{teamName}}
+
+# Check harness status
+harness-status:
+    @cd harness && check_codepos_status detailed
+
+# Clean harness temporary files
+harness-clean:
+    @cd harness && manage_codepos_team operation=clean
+
+# Reset harness environment
+harness-reset:
+    @cd harness && manage_codepos_team operation=reset
+
+# Health check for harness
+harness-health:
+    @cd harness && manage_codepos_team operation=health
+
+# Help for harness commands
+harness-help:
+    @cd harness && manage_codepos_team operation=help

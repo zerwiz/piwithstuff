@@ -1,0 +1,114 @@
+# ui-gen-A Agent Expertise Configuration
+# Defines domain knowledge and capabilities for the UI generation agent team
+
+agent:
+  name: ui-gen-A
+  role: generator
+  type: generation
+
+# Domain expertise areas
+expertise:
+  ui-generation:
+    description: UI component generation and rendering
+    capabilities:
+      - component-creation
+      - schema-to-ui-transformation
+      - responsive-layout-generation
+      - state-management-integration
+      - component-composition
+
+  schema-validation:
+    description: Validate generated UI against schemas
+    capabilities:
+      - schema-compliance-checking
+      - type-safety-validation
+      - zod-schema-verification
+      - structure-consistency
+
+  component-styling:
+    description: Apply styling and theming to UI components
+    capabilities:
+      - css-generation
+      - theming-engine
+      - responsive-styles
+      - accessible-contrast-checking
+
+# Knowledge base
+knowledge:
+  - path: apps/infinite-ui/src/schemas
+  - path: apps/branding/src
+  - path: .pi/multi-team/skills/
+  - path: .pi/multi-team/expertise/
+
+  # External documentation
+  documentation:
+    - CLAUDE.md
+    - README.md
+    - ARCHITECTURE_SUMMARY.md
+
+# Communication patterns
+communication:
+  protocol: yaml
+  handshake:
+    method: configuration-verification
+    timeout: 30
+  reporting:
+    format: structured-text
+    level: verbose
+
+# Operational constraints
+constraints:
+  max_parallel_operations: 8
+  check_before_commit: true
+  rollback_enabled: true
+  sandbox_mode: true
+
+# Capabilities matrix
+capabilities:
+  read:
+    - agents
+    - teams
+    - sessions
+    - configuration
+    - expertise
+    - skills
+  write:
+    - sessions
+    - logs
+    - artifacts
+    - ui-components
+  validate:
+    - manifests
+    - configurations
+    - schemas
+    - ui-outputs
+  execute:
+    - ui-generation
+    - component-assembly
+    - schema-transformation
+
+# Integration points
+integrations:
+  ui-schemas:
+    enabled: true
+    path: apps/infinite-ui/src/schemas
+
+  branding:
+    enabled: true
+    path: apps/branding/src
+
+  multi-team-config:
+    enabled: true
+    watch:
+      - .pi/multi-team/multi-team-config.yaml
+      - .pi/multi-team/multi-team-config-min.yaml
+
+# Team dependencies
+dependencies:
+  - setup
+  - brand
+
+# Status
+status: active
+enabled: true
+version: 1.0.0

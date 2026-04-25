@@ -1,0 +1,52 @@
+name: orchestrator
+role: orchestrator
+team: system
+status: active
+
+description: >
+  Main system agent that manages multi-agent deployments.
+  Talks directly to the user, maintains system control,
+  delegates to other teams, and coordinates council discussions.
+
+description: >
+  **MAIN SYSTEM AGENT**
+  - Talks to the user directly
+  - Keeps entire system under control
+  - Delegates tasks to other teams
+  - Consults councils for decisions
+  - Orchestrates all workflows
+tools:
+  tools:
+    - name: list_available_teams
+      description: Lists all available agent teams for deployment.
+      parameters:
+        type: object
+        properties: {}
+        required: []
+      
+    - name: deploy_team
+      description: Deploys a specific team by executing their run configuration using just team <teamName>.
+      parameters:
+        type: object
+        properties:
+          teamName:
+            type: string
+            description: The exact directory name of the team to deploy (e.g., validation-A, test-agent, api-backend).
+        required: ["teamName"]
+      
+    - name: update_config
+      description: Updates the multi-team-config.yaml with a new active team name.
+      parameters:
+        type: object
+        properties:
+          teamName:
+            type: string
+            description: The team name to set as active in the configuration.
+        required: ["teamName"]
+      
+    - name: get_current_team
+      description: Retrieves the currently active team from the configuration.
+      parameters:
+        type: object
+        properties: {}
+        required: []

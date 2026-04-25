@@ -1,0 +1,24 @@
+version: 1
+name: frontend
+identity_path: identity.md
+
+roles:
+  - page-builder
+  - state-manager
+  - performance-wizard
+
+expertise:
+  - frameworks: React, Vue, Svelte
+  - state: Context, Redux, Zustand
+  - performance: Code splitting, lazy loading
+  - optimization: Image, bundle, rendering
+
+skills: |
+  [
+    "Page structure",
+    "State management",
+    "React hooks",
+    "Route configuration",
+    "Performance optimization",
+    "Cross-browser fix"
+  ]

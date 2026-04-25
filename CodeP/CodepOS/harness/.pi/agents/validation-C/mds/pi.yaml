@@ -1,0 +1,21 @@
+pi:
+  project-root: CodepOS
+  schema-path: apps/infinite-ui/src/schemas/trees.schema.ts
+  branding-root: apps/branding
+  last-check: 2024-01-01T00:00:00Z
+  version: 1.0.0
+  agent-name: validation-C
+  agent-role: style_validator
+  agent-type: style_validation
+  enabled: true
+  status: active
+  capabilities:
+    - style-validation
+    - schema-compliance
+    - guideline-enforcement
+  configuration:
+    priority: 4
+    checks:
+      - style-guidelines
+      - schema-validation
+      - format-compliance

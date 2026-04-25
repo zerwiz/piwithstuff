@@ -1,0 +1,62 @@
+# Validation-C Agent Skills Configuration
+# Skills for style validation, schema compliance, and guideline enforcement capabilities
+
+skills:
+  - name: style-validation
+    description: Validate UI styles and design consistency
+    description: Ensure components adhere to design system and style guidelines
+    operations:
+      - style-check
+      - design-system-validation
+      - accessibility-audit
+      - color-contrast-checking
+
+  - name: schema-compliance
+    description: Validate UI components against schema definitions
+    description: Ensure generated components match schema specifications
+    operations:
+      - zod-validation
+      - json-schema-checking
+      - type-safety-verification
+      - structure-consistency-checking
+
+  - name: guideline-enforcement
+    description: Enforce project style and coding guidelines
+    description: Validate code follows established style guides
+    operations:
+      - eslint-checking
+      - prettier-formatting
+      - code-review-verification
+      - best-practices-enforcement
+
+  - name: format-compliance
+    description: Ensure code formatting and structural compliance
+    description: Validate code meets formatting requirements
+    operations:
+      - indent-checking
+      - spacing-verification
+      - line-length-validation
+      - naming-convention-checking
+
+  - name: visual-regression
+    description: Detect visual regressions in UI components
+    description: Compare UI renders against approved visual standards
+    operations:
+      - screenshot-comparison
+      - layout-regression-check
+      - color-shift-detection
+      - typography-validation
+
+metadata:
+  version: "1.0.0"
+  author: "CodepOS Multi-Agent System"
+  last_updated: "2024-01-01T00:00:00Z"
+  capabilities_count: 5
+  active: true
+  team: validation-C
+  role: style_validator
+  priority: 4
+  checks:
+    - style-guidelines
+    - schema-validation
+    - format-compliance

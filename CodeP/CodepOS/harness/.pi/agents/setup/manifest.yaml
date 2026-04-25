@@ -1,0 +1,26 @@
+agent:
+  name: setup
+  team: initializer
+  metadata:
+    md5:
+      pi: d41d8cd98f00b204e9800998ecf8427e
+      ref: 0000000000000000000000000000000
+  permissions:
+    - read
+    - write
+    - validate
+  status: active
+  last_updated: 2024-01-01T00:00:00Z
+  dependencies:
+    - skill-validate
+    - skill-generate
+  capabilities:
+    - environment-setup
+    - dependency-verification
+    - manifest-validation
+    - configuration-parsing
+    - session-management
+  configuration:
+    priority: 1
+    role: orchestrator
+    type: initializer

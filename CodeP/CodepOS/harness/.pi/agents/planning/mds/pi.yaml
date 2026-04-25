@@ -1,0 +1,78 @@
+# Planning Team - MD5 Checksums (Primary Integration)
+# This file stores the primary integration MD5 checksums for the planning agent
+# It defines the project integration context and environment configuration
+
+pi:
+  # Project root configuration
+  project-root: CodepOS
+
+  # Schema paths for UI and validation
+  schema-path: apps/infinite-ui/src/schemas/trees.schema.ts
+  ui-schema-path: apps/infinite-ui/src/schemas/ui.schema.ts
+  validation-schema-path: apps/infinite-ui/src/schemas/validation.schema.ts
+
+  # Branding configuration
+  branding-root: apps/branding
+
+  # Agent identification
+  agent-name: planning
+  agent-role: planner
+  agent-type: workflow_management
+  team: planning
+  priority: 2
+
+  # Integration status
+  last-check: 2024-01-01T00:00:00Z
+  version: 1.0.0
+  enabled: true
+  status: active
+
+  # Coordination dependencies
+  dependencies:
+    - setup
+    - ui-gen-A
+    - validation-A
+    - validation-B
+    - validation-C
+
+  # Capabilities
+  capabilities:
+    - task-breakdown
+    - dependency-mapping
+    - resource-allocation
+    - risk-assessment
+    - progress-tracking
+    - workflow-optimization
+
+  # Operational configuration
+  configuration:
+    timeout: 60
+    sandbox: true
+    coordination_mode: active
+    parallel_execution: true
+    max_subtasks: 16
+
+  # Coordination endpoints
+  coordination:
+    task-breakdown-api: .pi/multi-team/agents/planning/tasks
+    dependency-api: .pi/multi-team/agents/planning/dependencies
+    progress-api: .pi/multi-team/agents/planning/progress
+
+  # Monitoring
+  monitoring:
+    health-check-endpoint: .pi/multi-team/agents/planning/health
+    metrics-endpoint: .pi/multi-team/agents/planning/metrics
+
+  # Communication
+  communication:
+    protocol: yaml
+    reporting: verbose
+    on_failure: alert_and_retry
+    update_interval: 30
+
+  # Integration points
+  integrations:
+    justfile: true
+    terminal-ui: true
+    api-inventory: true
+    session-management: true

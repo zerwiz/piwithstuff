@@ -1,0 +1,27 @@
+agent:
+  name: ui-gen-A
+  team: ui-generation
+  metadata:
+    md5:
+      pi: a1b2c3d4e5f6789012345678abcdef01
+      ref: b2c3d4e5f6789012345678abcdef012
+  permissions:
+    - read
+    - write
+    - validate
+  status: active
+  last_updated: 2024-01-01T00:00:00Z
+  dependencies:
+    - skill-generate
+    - skill-validate
+  capabilities:
+    - ui-generation
+    - component-creation
+    - schema-validation
+  configuration:
+    priority: 3
+    role: generator
+    type: generation
+    env_vars:
+      UI_SCHEME_PATH: apps/infinite-ui/src/schemas
+      ARCHITECTURE_PATH: apps/infinite-ui/src/schemas/trees.schema.ts

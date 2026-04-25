@@ -1,0 +1,79 @@
+# Planning Team - Reference MD5 Checksums
+# Reference metadata for schema references and version tracking
+
+ref:
+  schema-versions:
+    - trees.schema.ts:1.0.0
+    - ui.schema.ts:2.1.0
+    - planning.schema.ts:1.0.0
+    - workflow.schema.ts:1.0.0
+  last-check: 2024-01-01T00:00:00Z
+  agent-name: planning
+  agent-role: planner
+  agent-type: workflow_management
+  enabled: true
+  status: active
+  description: "Workflow management and task coordination reference metadata"
+  schemas:
+    trees:
+      path: apps/infinite-ui/src/schemas/trees.schema.ts
+      version: 1.0.0
+      purpose: "Component tree structure definitions"
+    ui:
+      path: apps/infinite-ui/src/schemas/ui.schema.ts
+      version: 2.1.0
+      purpose: "UI component interface definitions"
+    planning:
+      path: .pi/multi-team/agents/planning/schemas/planning.schema.ts
+      version: 1.0.0
+      purpose: "Planning workflow and task definitions"
+    workflow:
+      path: .pi/multi-team/agents/planning/schemas/workflow.schema.ts
+      version: 1.0.0
+      purpose: "Workflow execution and coordination definitions"
+
+  # Reference capabilities
+  capabilities:
+    - task-breakdown
+    - dependency-mapping
+    - resource-allocation
+    - risk-assessment
+    - progress-tracking
+    - workflow-optimization
+
+  # Integration points
+  integrations:
+    - team: setup
+      status: active
+    - team: ui-gen-A
+      status: active
+    - team: validation-A
+      status: active
+    - team: validation-B
+      status: active
+    - team: validation-C
+      status: active
+    - team: validation-full
+      status: active
+
+  # Communication channels
+  communication:
+    protocol: yaml
+    reporting:
+      format: structured-text
+      level: verbose
+      on_failure: alert_and_retry
+
+  # Operational metadata
+  operational:
+    max_parallel_tasks: 10
+    timeout_per_task: 60
+    retry_count: 3
+    sandbox_mode: true
+
+  # Status tracking
+  status:
+    initialized: true
+    ready: true
+    last_check: 2024-01-01T00:00:00Z
+    health: healthy

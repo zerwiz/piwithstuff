@@ -1,0 +1,158 @@
+# Validation-C Agent Expertise Configuration
+# Defines domain knowledge and capabilities for the validation-C style validation agent
+
+agent:
+  name: validation-C
+  role: style_validator
+  type: style_validation
+
+# Domain expertise areas
+expertise:
+  style-validation:
+    description: Style guidelines validation and enforcement
+    capabilities:
+      - style-guide-compliance
+      - design-system-enforcement
+      - accessibility-checking
+      - consistency-validation
+      - visual-quality-assessment
+
+  schema-compliance:
+    description: Validate against schema definitions and structure rules
+    capabilities:
+      - schema-validation
+      - structure-validation
+      - type-compliance
+      - constraint-enforcement
+      - drift-detection
+
+  guideline-enforcement:
+    description: Enforce coding and design standards
+    capabilities:
+      - coding-standards
+      - naming-conventions
+      - file-structure-validation
+      - documentation-compliance
+      - best-practices-enforcement
+
+  accessibility-checking:
+    description: Validate accessibility standards (WCAG, ARIA, etc.)
+    capabilities:
+      - wcag-compliance
+      - aria-attributes
+      - keyboard-navigation
+      - color-contrast
+      - screen-reader-testing
+
+  performance-checking:
+    description: Performance validation and optimization checks
+    capabilities:
+      - lighthouse-audit
+      - performance-budget
+      - bundle-size-analysis
+      - load-time-optimization
+      - resource-caching-validation
+
+# Knowledge base
+knowledge:
+  - path: .pi/multi-team/multi-team-config.yaml
+  - path: .pi/multi-team/multi-team-config-min.yaml
+  - path: apps/infinite-ui/src/schemas/trees.schema.ts
+  - path: apps/infinite-ui/src/schemas/ui.schema.ts
+  - path: apps/branding/src
+  - path: .pi/multi-team/skills/
+  - path: .pi/multi-team/expertise/
+
+# CodepOS-specific validations
+validations:
+  style-guidelines:
+    description: CodepOS-specific style and formatting rules
+    tools:
+      - eslint
+      - prettier
+      - stylelint
+      - biome
+
+  format-compliance:
+    description: Code formatting and linting compliance
+    tools:
+      - prettier-config
+      - eslint-config
+      - tsconfig-validation
+      - type-checking
+
+  visual-standards:
+    description: Visual design system compliance
+    tools:
+      - design-tokens
+      - color-system
+      - typography-rules
+      - spacing-grid
+
+# Communication patterns
+communication:
+  protocol: yaml
+  reporting:
+    format: structured-text
+    level: verbose
+    on_failure: alert_and_retry
+    style_report: true
+
+# Operational constraints
+constraints:
+  max_parallel_checks: 12
+  timeout_per_check: 45
+  retry_count: 2
+  sandbox_mode: true
+  strict_mode: true
+
+# Capabilities matrix
+capabilities:
+  read:
+    - agents
+    - teams
+    - sessions
+    - configurations
+    - style-guidelines
+    - schemas
+  write:
+    - test-reports
+    - logs
+    - artifacts
+    - compliance-reports
+  validate:
+    - manifests
+    - style-rules
+    - schemas
+    - configurations
+    - visual-standards
+  execute:
+    - style-validation
+    - compliance-checks
+    - audit-generations
+    - accessibility-tests
+
+# Integration points
+integrations:
+  style-guidelines:
+    enabled: true
+    path: apps/branding/src/styles
+
+  visual-system:
+    enabled: true
+    components:
+      - design-system
+      - component-library
+      - theme-system
+
+  multi-team-config:
+    enabled: true
+    watch:
+      - .pi/multi-team/multi-team-config.yaml
+      - .pi/multi-team/multi-team-config-min.yaml
+
+# Status
+status: active
+enabled: true
+version: "1.0.0"
+last_updated: "2024-01-01T00:00:00Z"

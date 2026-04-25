@@ -1,0 +1,162 @@
+# Validation-A Agent Expertise Configuration
+# Defines domain knowledge and capabilities for the validation-A quality assurance agent
+
+agent:
+  name: validation-A
+  role: quality_assurance
+  type: tester
+
+# Domain expertise areas
+expertise:
+  qa_testing:
+    description: Automated quality assurance testing and validation
+    capabilities:
+      - unit-tests
+      - integration-tests
+      - regression-tests
+      - smoke-tests
+      - acceptance-tests
+
+  automated-testing:
+    description: Automated test execution and verification
+    capabilities:
+      - test-scripting
+      - test-automation
+      - ci-cd-integration
+      - parallel-execution
+
+  regression-testing:
+    description: Regression test suite management
+    capabilities:
+      - baseline-comparison
+      - flaky-test-detection
+      - test-priority-analysis
+      - coverage-reporting
+
+  integration-validation:
+    description: Integration testing across system components
+    capabilities:
+      - api-validation
+      - database-verification
+      - service-mesh-checking
+      - cross-component-testing
+
+  smoke-tests:
+    description: Quick validation of core functionality
+    capabilities:
+      - basic-functionality-checks
+      - critical-path-validation
+      - performance-baseline
+      - error-rate-monitoring
+
+# Knowledge base
+knowledge:
+  - path: .pi/multi-team/multi-team-config.yaml
+  - path: .pi/multi-team/multi-team-config-min.yaml
+  - path: apps/infinite-ui/src/schemas/trees.schema.ts
+  - path: apps/infinite-ui/src/schemas/ui.schema.ts
+
+# Test frameworks expertise
+test_frameworks:
+  - jest
+  - vitest
+  - playwright
+  - supertest
+  - axios
+
+# CodepOS-specific validations
+validations:
+  schema-compliance:
+    description: Validate UI components against schema definitions
+    tools:
+      - zod
+      - json-schema
+      - typescript-strict
+
+  performance:
+    description: Performance testing and benchmarking
+    tools:
+      - lighthouse
+      - web-vitals
+      - performance-now
+
+  accessibility:
+    description: Accessibility testing and compliance
+    tools:
+      - axe-core
+      - pa11y
+      - screen-reader-testing
+
+  security:
+    description: Security scanning and validation
+    tools:
+      - eslint-plugin-security
+      - sri-scanner
+      - dependency-check
+
+# Communication patterns
+communication:
+  protocol: yaml
+  reporting:
+    format: structured-text
+    level: verbose
+    on_failure: alert_and_retry
+
+# Operational constraints
+constraints:
+  max_parallel_tests: 10
+  timeout_per_test: 60
+  retry_count: 3
+  sandbox_mode: true
+
+# Capabilities matrix
+capabilities:
+  read:
+    - agents
+    - teams
+    - sessions
+    - configurations
+    - test-results
+  write:
+    - test-reports
+    - logs
+    - artifacts
+    - coverage-data
+  validate:
+    - manifests
+    - test-suites
+    - schemas
+    - configurations
+  execute:
+    - test-execution
+    - regression-checks
+    - performance-tests
+    - integration-tests
+
+# Integration points
+integrations:
+  ci-cd:
+    enabled: true
+    platforms:
+      - github-actions
+      - gitlab-ci
+      - circle-ci
+
+  reporting:
+    enabled: true
+    tools:
+      - junit
+      - coverage
+      - dashboard-api
+
+  notification:
+    enabled: true
+    channels:
+      - slack
+      - email
+      - pagerduty
+
+# Status
+status: active
+enabled: true
+version: "1.0.0"

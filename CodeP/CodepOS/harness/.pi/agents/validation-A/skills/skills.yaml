@@ -1,0 +1,58 @@
+# Validation-A Agent Skills Configuration
+# Skills for automated testing, QA, and regression testing capabilities
+
+skills:
+  - name: qa-tests
+    description: Execute automated quality assurance tests
+    description: Run and manage test suites for code quality validation
+    operations:
+      - unit-tests
+      - integration-tests
+      - regression-tests
+      - smoke-tests
+
+  - name: automated-testing
+    description: Orchestrate automated testing pipelines
+    description: Execute CI/CD testing workflows and report results
+    operations:
+      - test-discovery
+      - test-execution
+      - result-aggregation
+      - failure-analysis
+
+  - name: regression-testing
+    description: Perform regression test validation
+    description: Verify new changes don't break existing functionality
+    operations:
+      - test-suite-execution
+      - baseline-comparison
+      - anomaly-detection
+      - status-reporting
+
+  - name: integration-testing
+    description: Test system integration points
+    description: Validate interactions between components
+    operations:
+      - api-integration-tests
+      - database-integration-tests
+      - service-integration-tests
+      - end-to-end-scenarios
+
+  - name: test-reporting
+    description: Generate test results and reports
+    description: Create comprehensive test execution reports
+    operations:
+      - junit-generation
+      - coverage-reporting
+      - metrics-tracking
+      - dashboard-updates
+
+metadata:
+  version: "1.0.0"
+  author: "CodepOS Multi-Agent System"
+  last_updated: "2024-01-01T00:00:00Z"
+  capabilities_count: 5
+  active: true
+  team: validation-A
+  role: quality_assurance
+  priority: 4

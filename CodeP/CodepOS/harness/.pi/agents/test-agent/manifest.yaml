@@ -1,0 +1,4 @@
+name: test-agent
+role: testing
+team: test-agent
+status: active

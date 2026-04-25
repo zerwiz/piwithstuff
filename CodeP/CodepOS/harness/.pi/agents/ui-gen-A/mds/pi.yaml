@@ -1,0 +1,21 @@
+pi:
+  project-root: CodepOS
+  schema-path: apps/infinite-ui/src/schemas/trees.schema.ts
+  branding-root: apps/branding
+  last-check: 2024-01-01T00:00:00Z
+  version: 1.0.0
+  agent-name: ui-gen-A
+  agent-role: generator
+  agent-type: generation
+  enabled: true
+  status: active
+  dependencies:
+    - setup
+    - brand
+  capabilities:
+    - ui-generation
+    - component-creation
+    - schema-validation
+  env_vars:
+    UI_SCHEME_PATH: apps/infinite-ui/src/schemas
+    ARCHITECTURE_PATH: apps/infinite-ui/src/schemas/trees.schema.ts

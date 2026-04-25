@@ -1,0 +1,104 @@
+# Validation-B Agent Skills Configuration
+# Skills for automated testing, E2E validation, and performance testing capabilities
+
+skills:
+  - name: automated-testing
+    description: Execute automated test suites and verify system functionality
+    description: Run and manage automated testing workflows with parallel execution
+    operations:
+      - test-discovery
+      - test-execution
+      - result-aggregation
+      - failure-analysis
+      - parallel-runs
+
+  - name: regression-tests
+    description: Perform regression testing across all system components
+    description: Verify new changes don't break existing functionality
+    operations:
+      - test-suite-execution
+      - baseline-comparison
+      - anomaly-detection
+      - status-reporting
+      - flaky-test-fix
+
+  - name: e2e-validation
+    description: End-to-end validation of user journeys and system flows
+    description: Validate complete user flows from start to finish
+    operations:
+      - user-journey-validation
+      - flow-verification
+      - state-transition-testing
+      - cross-browser-testing
+      - accessibility-testing
+
+  - name: performance-testing
+    description: Performance and load testing capabilities
+    description: Measure and validate system performance under various loads
+    operations:
+      - load-testing
+      - stress-testing
+      - throughput-measurement
+      - latency-monitoring
+      - resource-utilization
+
+  - name: e2e-scenarios
+    description: Execute complex end-to-end scenarios
+    description: Test complete application workflows with realistic user data
+    operations:
+      - scenario-definition
+      - data-seeding
+      - workflow-execution
+      - result-verification
+      - cleanup
+
+  - name: test-orchestration
+    description: Coordinate and manage multiple test suites
+    description: Run tests in parallel and aggregate results efficiently
+    operations:
+      - suite-orchestration
+      - parallel-execution
+      - result-merging
+      - failure-correlation
+      - prioritization
+
+  - name: test-reporting
+    description: Generate comprehensive test execution reports
+    description: Create detailed reports with metrics, coverage, and analysis
+    operations:
+      - junit-generation
+      - coverage-reporting
+      - metrics-tracking
+      - dashboard-updates
+      - trend-analysis
+
+  - name: test-data-management
+    description: Manage test data and fixtures
+    description: Create, seed, and clean test data for test execution
+    operations:
+      - fixture-creation
+      - data-seeding
+      - teardown
+      - isolation-verification
+      - cleanup
+
+metadata:
+  version: "1.0.0"
+  author: "CodepOS Multi-Agent System"
+  last_updated: "2024-01-01T00:00:00Z"
+  capabilities_count: 8
+  active: true
+  team: validation-B
+  role: tester
+  priority: 4
+  dependencies:
+    - setup
+    - ui-gen-A
+  configuration:
+    stage: qa_tests
+    checks:
+      - automated-tests
+      - regression-tests
+      - e2e-validation
+    timeout: 60
+    sandbox: true

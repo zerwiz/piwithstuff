@@ -1,0 +1,65 @@
+# UI Generation Agent Skills
+# Skills that enable the ui-gen-A agent to perform UI generation tasks
+
+skills:
+  - name: ui-generation
+    description: Generate UI components and layouts
+    description: Create responsive, accessible UI components from schemas
+    operations:
+      - parse_schema
+      - generate_component
+      - apply_styles
+      - inject_dependencies
+
+  - name: component-creation
+    description: Create new UI components
+    description: Generate reusable component libraries and templates
+    operations:
+      - create_component
+      - define_interface
+      - export_templates
+      - register_component
+
+  - name: schema-validation
+    description: Validate UI schemas and structures
+    description: Ensure generated components match schema specifications
+    operations:
+      - validate_schema
+      - check_compliance
+      - detect_drift
+      - apply_corrections
+
+  - name: styling
+    description: Apply and manage UI styles
+    description: Handle CSS, Tailwind, and design system integration
+    operations:
+      - apply_themes
+      - manage_responsive
+      - enforce_accessibility
+      - optimize_perf
+
+  - name: integration
+    description: Integrate UI components with backends
+    description: Connect generated UIs to API endpoints and services
+    operations:
+      - bind_api
+      - handle_events
+      - manage_state
+      - sync_data
+
+metadata:
+  version: "1.0.0"
+  author: "CodepOS Multi-Agent System"
+  last_updated: "2024-01-01T00:00:00Z"
+  capabilities_count: 5
+  active: true
+  dependencies:
+    - setup
+    - brand
+  configuration:
+    priority: 3
+    role: generator
+    type: generation
+    env_vars:
+      UI_SCHEME_PATH: apps/infinite-ui/src/schemas
+      ARCHITECTURE_PATH: apps/infinite-ui/src/schemas/trees.schema.ts

@@ -1,0 +1,173 @@
+# Validation-B Agent Expertise Configuration
+# Defines domain knowledge and capabilities for the validation-B automated testing agent team
+
+agent:
+  name: validation-B
+  role: tester
+  type: testing
+
+# Domain expertise areas
+expertise:
+  automated_testing:
+    description: Automated test execution and verification
+    capabilities:
+      - test-scripting
+      - test-automation
+      - ci-cd-integration
+      - parallel-execution
+      - flaky-test-detection
+
+  regression-tests:
+    description: Regression test suite management
+    capabilities:
+      - baseline-comparison
+      - test-priority-analysis
+      - coverage-reporting
+      - anomaly-detection
+
+  e2e-validation:
+    description: End-to-end testing and verification
+    capabilities:
+      - scenario-execution
+      - cross-browser-testing
+      - mobile-device-testing
+      - performance-validation
+
+  test-management:
+    description: Test lifecycle management
+    capabilities:
+      - test-planning
+      - test-scheduling
+      - resource-allocation
+      - result-tracker
+
+# Knowledge base
+knowledge:
+  - path: .pi/multi-team/multi-team-config.yaml
+  - path: .pi/multi-team/multi-team-config-min.yaml
+  - path: apps/infinite-ui/src/schemas/trees.schema.ts
+  - path: apps/infinite-ui/src/schemas/ui.schema.ts
+  - path: apps/branding/src
+
+# Test frameworks expertise
+test_frameworks:
+  - jest
+  - vitest
+  - playwright
+  - puppeteer
+  - webdriverio
+  - supertest
+  - axios
+
+# CodepOS-specific validations
+validations:
+  automated-tests:
+    description: Automated CI/CD test execution
+    tools:
+      - github-actions
+      - gitlab-ci
+      - circle-ci
+      - jenkins
+
+  integration-tests:
+    description: System integration testing
+    tools:
+      - mocha
+      - ava
+      - karma
+
+  e2e-testing:
+    description: End-to-end user journey testing
+    tools:
+      - cypress
+      - puppeteer
+      - selenium
+
+  performance:
+    description: Performance and load testing
+    tools:
+      - locust
+      - k6
+      - jmeter
+
+# Communication patterns
+communication:
+  protocol: yaml
+  reporting:
+    format: structured-text
+    level: verbose
+    on_failure: alert_and_retry
+  metrics:
+    enabled: true
+    format: prometheus
+
+# Operational constraints
+constraints:
+  max_parallel_tests: 10
+  timeout_per_test: 60
+  retry_count: 3
+  sandbox_mode: true
+  max_retries: 5
+  parallel_execution: true
+
+# Capabilities matrix
+capabilities:
+  read:
+    - agents
+    - teams
+    - sessions
+    - configurations
+    - test-results
+    - metrics
+  write:
+    - test-reports
+    - logs
+    - artifacts
+    - coverage-data
+    - test-results
+  validate:
+    - manifests
+    - test-suites
+    - schemas
+    - configurations
+    - test-outputs
+  execute:
+    - test-execution
+    - regression-checks
+    - performance-tests
+    - integration-tests
+    - e2e-scenarios
+
+# Integration points
+integrations:
+  ci-cd:
+    enabled: true
+    platforms:
+      - github-actions
+      - gitlab-ci
+      - circle-ci
+      - bitbucket-pipelines
+
+  reporting:
+    enabled: true
+    tools:
+      - junit
+      - coverage
+      - dashboard-api
+      - slack-notify
+
+  notification:
+    enabled: true
+    channels:
+      - slack
+      - email
+      - pagerduty
+      - teams
+
+# Status
+status: active
+enabled: true
+version: "1.0.0"
+last_updated: "2024-01-01T00:00:00Z"
+team: validation-B
+priority: 4

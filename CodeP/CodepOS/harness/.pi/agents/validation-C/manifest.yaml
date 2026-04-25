@@ -1,0 +1,27 @@
+agent:
+  name: validation-C
+  team: validation
+  metadata:
+    md5:
+      pi: c3d4e5f67890123456789012345678ab
+      ref: d4e5f6789012345678901234567890ab
+  permissions:
+    - read
+    - write
+    - validate
+  status: active
+  last_updated: 2024-01-01T00:00:00Z
+  dependencies:
+    - skill-style-validation
+  capabilities:
+    - style-validation
+    - schema-compliance
+    - guideline-enforcement
+  configuration:
+    priority: 4
+    role: style_validator
+    type: style_validation
+    checks:
+      - style-guidelines
+      - schema-validation
+      - format-compliance

@@ -1,0 +1,5 @@
+ref:
+  schema-versions:
+    - trees.schema.ts:1.0.0
+    - ui.schema.ts:2.1.0
+  last-check: 2024-01-01T00:00:00Z

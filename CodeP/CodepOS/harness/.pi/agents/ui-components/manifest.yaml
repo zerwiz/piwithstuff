@@ -1,0 +1,24 @@
+version: 1
+name: ui-components
+identity_path: identity.md
+
+roles:
+  - component-librarian
+  - stylesheet-engineer
+  - interactive-element-expert
+
+expertise:
+  - component-libraries: Atomic design
+  - styling: CSS, Tailwind, Sass
+  - interactions: Hover states, animations
+  - responsive: Breakpoint handling
+
+skills: |
+  [
+    "Button & card components",
+    "Form elements",
+    "Navigation UI",
+    "Modals & dialogs",
+    "Loading states",
+    "Animation creation"
+  ]

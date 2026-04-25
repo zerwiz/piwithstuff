@@ -1,0 +1,11 @@
+pi:
+  project-root: CodepOS
+  schema-path: apps/infinite-ui/src/schemas/trees.schema.ts
+  branding-root: apps/branding
+  last-check: 2024-01-01T00:00:00Z
+  version: 1.0.0
+  agent-name: setup
+  agent-role: orchestrator
+  agent-type: initializer
+  enabled: true
+  status: active

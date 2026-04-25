@@ -1,0 +1,24 @@
+version: 1
+name: testing
+identity_path: identity.md
+
+roles:
+  - test-architect
+  - qa-engineer
+  - automation-specialist
+
+expertise:
+  - unit-testing: Jest, Vitest
+  - integration-testing: API tests
+  - e2e-testing: Playwright, Cypress
+  - coverage-analysis: Identifying gaps
+
+skills: |
+  [
+    "Writing test suites",
+    "Mocking dependencies",
+    "Debugging failures",
+    "Coverage reports",
+    "CI/CD integration",
+    "Visual regression tests"
+  ]

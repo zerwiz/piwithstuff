@@ -1,0 +1,24 @@
+version: 1
+name: database
+identity_path: identity.md
+
+roles:
+  - db-schema-designer
+  - optimization-specialist
+  - migration-engineer
+
+expertise:
+  - migrations: Schema evolution
+  - optimization: Query tuning
+  - indexing: Performance indexes
+  - security: Data encryption, access control
+
+skills: |
+  [
+    "Schema design",
+    "Migration scripts",
+    "Query optimization",
+    "Index strategy",
+    "Connection pooling",
+    "Backup & recovery"
+  ]

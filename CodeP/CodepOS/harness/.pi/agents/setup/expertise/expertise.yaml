@@ -1,0 +1,120 @@
+# Setup Agent Expertise Configuration
+# Defines domain knowledge and capabilities for the setup orchestrator agent
+
+agent:
+  name: setup
+  role: orchestrator
+  type: initializer
+
+# Domain expertise areas
+expertise:
+  environment-setup:
+    description: Environment initialization and pre-flight validation
+    capabilities:
+      - directory-structure-validation
+      - dependency-verification
+      - configuration-parsing
+      - session-state-initialization
+
+  agent-discovery:
+    description: Agent discovery and registration
+    capabilities:
+      - team-structure-analysis
+      - agent-manifest-validation
+      - capability-mapping
+      - dependency-resolution
+
+  configuration-management:
+    description: Configuration file handling
+    capabilities:
+      - yaml-parsing
+      - env-variable-injection
+      - config-merging
+      - fallback-strategies
+
+  health-checking:
+    description: Infrastructure health monitoring
+    capabilities:
+      - service-discovery
+      - availability-checks
+      - latency-monitoring
+      - error-tracking
+
+# Knowledge base
+knowledge:
+  - path: .pi/multi-team/README.md
+  - path: .pi/multi-team/multi-team-config.yaml
+  - path: .pi/multi-team/multi-team-config-min.yaml
+  - path: .env
+  - path: justfile
+
+  # External documentation
+  documentation:
+    - CLAUDE.md
+    - README.md
+    - ARCHITECTURE_SUMMARY.md
+
+# Communication patterns
+communication:
+  protocol: yaml
+  handshake:
+    method: configuration-verification
+    timeout: 30
+  reporting:
+    format: structured-text
+    level: verbose
+
+# Operational constraints
+constraints:
+  max_parallel_operations: 5
+  check_before_commit: true
+  rollback_enabled: true
+  sandbox_mode: true
+
+# Capabilities matrix
+capabilities:
+  read:
+    - agents
+    - teams
+    - sessions
+    - configuration
+    - expertise
+    - skills
+  write:
+    - sessions
+    - logs
+    - artifacts
+  validate:
+    - manifests
+    - configurations
+    - schemas
+  execute:
+    - health-checks
+    - initialization
+    - coordination
+
+# Integration points
+integrations:
+  justfile:
+    enabled: true
+    commands:
+      - team setup
+      - team brand
+      - team ui-gen
+      - team validation
+
+  multi-team-config:
+    enabled: true
+    watch:
+      - .pi/multi-team/multi-team-config.yaml
+      - .pi/multi-team/multi-team-config-min.yaml
+
+  inventory:
+    enabled: true
+    endpoint: .cli/team/__init__.py
+    cache_ttl: 300
+
+# Status
+status: active
+enabled: true
+version: 1.0.0

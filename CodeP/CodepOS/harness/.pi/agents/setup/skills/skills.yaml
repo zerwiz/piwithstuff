@@ -1,0 +1,64 @@
+# Setup Agent Skills
+# Skills that enable the setup orchestrator to perform environment initialization tasks
+
+skills:
+  - name: environment-setup
+    description: Initialize and sanitize the CodepOS environment
+    description: Setup and verify all required directories and configurations
+    operations:
+      - create_directories
+      - validate_structure
+      - check_dependencies
+      - verify_permissions
+
+  - name: dependency-verification
+    description: Verify project dependencies are installed and accessible
+    description: Check for required npm packages, Python dependencies, and system tools
+    operations:
+      - check_npm
+      - check_python
+      - check_system_tools
+      - install_missing
+
+  - name: manifest-validation
+    description: Validate agent manifest files and configuration integrity
+    description: Ensure all agent manifests are properly formatted and configured
+    operations:
+      - parse_yaml
+      - validate_structure
+      - check_md5_checksums
+      - verify_signatures
+
+  - name: configuration-parsing
+    description: Parse and load configuration files
+    description: Read and interpret YAML, JSON, and TOML configuration files
+    operations:
+      - load_yaml
+      - load_json
+      - validate_schema
+      - merge_configs
+
+  - name: session-management
+    description: Manage agent sessions and state
+    description: Create, update, and clean session state files
+    operations:
+      - create_session
+      - update_state
+      - clear_traces
+      - preserve_memories
+
+  - name: health-check
+    description: Perform health checks on agent infrastructure
+    description: Verify agent OS, runtime, and communication channels
+    operations:
+      - check_os
+      - check_runtime
+      - verify_communication
+      - diagnose_issues
+
+metadata:
+  version: "1.0.0"
+  author: "CodepOS Multi-Agent System"
+  last_updated: "2024-01-01T00:00:00Z"
+  capabilities_count: 6
+  active: true

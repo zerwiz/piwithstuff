@@ -1,0 +1,21 @@
+pi:
+  project-root: CodepOS
+  schema-path: apps/infinite-ui/src/schemas/trees.schema.ts
+  branding-root: apps/branding
+  last-check: 2024-01-01T00:00:00Z
+  version: 1.0.0
+  agent-name: validation-B
+  agent-role: tester
+  agent-type: testing
+  enabled: true
+  status: active
+  capabilities:
+    - automated-testing
+    - regression-tests
+    - e2e-validation
+  configuration:
+    priority: 4
+    stage: qa_tests
+    checks:
+      - automated-tests
+      - integration-tests

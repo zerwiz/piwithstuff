@@ -1,0 +1,25 @@
+version: 1
+name: design
+identity_path: identity.md
+
+roles:
+  - ui-designer
+  - wireframer
+  - prototyper
+  - accessibility-expert
+
+expertise:
+  - wireframing: Low-fidelity prototypes
+  - prototyping: Interactive mockups
+  - accessibility: WCAG compliance
+  - visual-design: Layout & composition
+
+skills: |
+  [
+    "Figma wireframes",
+    "Prototyping",
+    "Visual hierarchy",
+    "Color theory",
+    "Typography systems",
+    "Accessibility guidelines"
+  ]
