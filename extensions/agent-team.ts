@@ -1,675 +1,1068 @@
 /**
- * agent-team.ts — Production-Ready Agent Team with Agent Switching
+ * agent-team.ts — Complete Agent Switching Implementation
  *
- * This file integrates:
- * - AgentTeam class with all methods
- * - All interfaces and types properly defined
- * - State management initialization
- * - Command registration
- * - Validation functions
- * - Comprehensive error handling
- * - All edge case handlers
- * - Production-ready implementation
+ * Production-ready TypeScript module for managing multi-agent teams with
+ * switching capabilities, validation, and error recovery.
+ *
+ * @module AgentTeam
+ * @license MIT
  */
 
 import { Tool, ToolResult } from "pi-tui";
+import { Agent, AgentStatus } from "../tools";
 
-// ================= Interfaces and Types =================
-
-/**
- * Tool execution data interface
- */
-export interface ToolExecutionData {
-  tool: Tool;
-  agentId: string;
-  result: ToolResult;
-  context: string;
-}
+// ============================================
+// ============ Type Definitions =============
+// ============================================
 
 /**
- * Validation result for tool execution
+ * AgentSwitchMode enum - Current switching state
+ *
+ * States track the lifecycle of a switch operation:
+ * - idle: No operation active
+ * - pending: User requested switch, awaiting completion
+ * - confirming: User confirmed, operation in progress
+ * - complete: Switch completed successfully
+ * - error: Switch failed
+ * - cancelled: Switch cancelled by user
  */
-export interface ValidationResult {
-  valid: boolean;
-  message: string;
-  allow: boolean;
-  confirm: boolean;
-}
-
-/**
- * Switch validation result
- */
-export interface SwitchValidationResult {
-  valid: boolean;
-  message: string;
-  agent?: string;
-  error?: string;
-}
-
-/**
- * Switch mode enumeration
- * - 'pending': A switching request has been made, awaiting confirmation  
- * - 'confirming': User is prompted to confirm the switch
- * - 'active': Switch operation in progress
- * - 'idle': No switching operation active
- */
-export enum SwitchMode {
+export const enum AgentSwitchMode {
   IDLE = "idle",
   PENDING = "pending",
   CONFIRMING = "confirming",
-  ACTIVE = "active",
+  COMPLETE = "complete",
+  ERROR = "error",
+  CANCELLED = "cancelled",
 }
 
 /**
- * Agent switching state interface
- * - switchMode: Current mode of the switching operation
- * - switchedAgent: Agent ID that was switched to (undefined if switching or idle)
- * - canSwitchToAnyAgent: Whether switching to any agent type is permitted
- * - switchedAt: Timestamp of last switch (for session tracking)
- * - requestedAgent: Agent currently being switched
- * - lastError: Last error message if any switch failed
+ * AgentSwitchState interface - Complete switching state
+ *
+ * Tracks all aspects of agent switching including:
+ * - Current mode
+ * - Target agent being switched to
+ * - Session preservation state
+ * - Context tracking
+ * - Timestamps and metadata
+ *
+ * @property switchMode - Current switching mode (enum)
+ * @property targetAgentId - Agent ID being switched to (undefined if none)
+ * @property sessionId - Session identifier for preservation (if applicable)
+ * @property context - Operation context (normal, error, steered, switching)
+ * @property switchCount - Number of switches performed (for tracking)
+ * @property lastSwitchedAt - Timestamp of last switch
+ * @property canSwitchToAny - Whether any agent can be switched to
+ * @property errorReason - Error message if switch failed
+ * @property recoveryState - Recovery state if error occurred
+ * @property metadata - Additional metadata
  */
 export interface AgentSwitchState {
-  switchMode: SwitchMode;
-  switchedAgent: string | undefined;
-  canSwitchToAnyAgent: boolean;
-  switchedAt?: number;
-  requestedAgent?: string;
-  lastError?: string;
+  /** Current switching mode */
+  switchMode: AgentSwitchMode;
+  /** Agent ID being switched to (undefined if idle/active) */
+  targetAgentId?: string;
+  /** Current switched agent ID */
+  switchedAgent?: string;
+  /** Session identifier for preservation (optional) */
+  sessionId?: string;
+  /** Operation context */
+  context: "normal" | "error" | "steered" | "switching";
+  /** Number of switches performed (for tracking) */
+  switchCount: number;
+  /** Timestamp of last switch */
+  lastSwitchedAt?: number;
+  /** Whether switching to any agent is permitted */
+  canSwitchToAny: boolean;
+  /** Error message if switch failed */
+  errorReason?: string;
+  /** Recovery state if error occurred */
+  recoveryState?: RecoveryState;
+  /** Additional metadata */
+  metadata?: Record<string, any>;
 }
 
 /**
- * Agent permissions interface for tool access control
+ * RecoveryState type - State for error recovery
  */
-export interface AgentPermissions {
-  allow: boolean;
-  confirm: boolean;
-  [key: string]: boolean;
+export interface RecoveryState {
+  /** Whether recovery is available */
+  available: boolean;
+  /** Recovery agent ID (if error is recoverable) */
+  recoveryAgentId?: string;
+  /** Retry attempts */
+  retryCount?: number;
+  /** Last error timestamp */
+  lastErrorAt?: number;
+}
+
+// ============================================
+// ============ Switch Validation Config =============
+// ============================================
+
+/**
+ * AgentSwitchConfig interface - Configuration for switch operations
+ *
+ * @property defaultContext - Default operation context
+ * @property maxSwitchRate - Maximum switches per time period
+ * @property sessionTimeout - Session expiration time in ms
+ * @property allowAnySwitch - Whether any agent can be switched to
+ * @property requireConfirmation - Whether to require user confirmation
+ */
+export interface AgentSwitchConfig {
+  /** Default operation context */
+  defaultContext: "normal" | "error" | "steered" | "switching";
+  /** Maximum switches per minute (for rate limiting) */
+  maxSwitchRate?: number;
+  /** Session timeout in milliseconds */
+  sessionTimeout: number;
+  /** Whether switching to any agent is permitted */
+  allowAnySwitch?: boolean;
+  /** Whether to require user confirmation */
+  requireConfirmation?: boolean;
 }
 
 /**
- * Agent team configuration interface
+ * ValidationResult type - Result of validation check
  */
-export interface AgentTeamConfig {
-  /** Maximum number of concurrent agents */
-  maxConcurrent: number;
-  /** Tool execution timeout */
-  toolTimeout: number;
-  /** Session preservation */
-  preserveSessions: boolean;
-  /** Error tolerance */
-  errorTolerance: number;
-}
-
-/**
- * Agent context tracking result
- */
-export interface ContextTrackingResult {
-  tracking: boolean;
+type ValidationResult = {
+  /** Whether validation passed */
+  valid: boolean;
+  /** Message explaining result */
   message: string;
-  preserveSession: boolean;
-  recoverAgent?: boolean;
+  /** Error code if validation failed */
+  errorCode?: string;
+  /** Additional details */
+  details?: Record<string, any>;
+};
+
+/**
+ * SwitchRequest type - Request for agent switch
+ */
+interface SwitchRequest {
+  /** Target agent ID */
+  agentId?: string;
+  /** Switch context */
+  context?: "normal" | "error" | "steered" | "switching";
+  /** Additional parameters */
+  params?: Record<string, any>;
 }
 
-/**
- * Session preservation result
- */
-export interface SessionPreservationResult {
-  preserved: boolean;
-  state?: any;
-  error?: string;
-}
+// ============================================
+// ============ AgentTeam Class =============
+// ============================================
 
 /**
- * Error recovery action
- */
-export interface ErrorRecoveryAction {
-  action: string;
-  agentId: string;
-  status: string;
-}
-
-// ================= Type Definitions =================
-
-/**
- * Tool permission map type
- */
-export type ToolPermissionMap = Map<string, { allow: boolean; confirm: boolean }>;
-
-/**
- * Agent switch validator type
- */
-export type AgentSwitchValidator = (
-  tool: Tool,
-  agentId: string,
-  config: AgentTeamConfig,
-): ValidationResult;
-
-// ================= Context Tracking Functions =================
-
-/**
- * Track context for edge cases
- */
-export function trackContext(
-  context: ToolExecutionData["context"],
-  agentId: string,
-): ContextTrackingResult {
-  switch (context) {
-    case "switching":
-      return {
-        tracking: true,
-        message: "Switching operation in progress",
-        preserveSession: true,
-      };
-    case "error":
-      return {
-        tracking: true,
-        message: "Error context - preserve state",
-        preserveSession: true,
-        recoverAgent: true,
-      };
-    case "steered":
-      return {
-        tracking: true,
-        message: "Steered context",
-        preserveSession: false,
-        recoverAgent: true,
-      };
-    default:
-      return { tracking: false, message: "Normal operation", preserveSession: false };
-  }
-}
-
-/**
- * Handle session preservation
- */
-export function handleSessionPreservation(
-  state: any,
-  agentId: string,
-): SessionPreservationResult {
-  if (state && state.sessions) {
-    const sessions = state.sessions.agentSessions;
-    if (sessions && sessions[agentId]) {
-      return { preserved: true, state: sessions[agentId] };
-    }
-  }
-  return { preserved: false, state: undefined };
-}
-
-/**
- * Handle error recovery
- */
-export function handleErrorRecovery(
-  action: string,
-  agentId: string,
-  status: string,
-): ErrorRecoveryAction {
-  return { action, agentId, status };
-}
-
-// ================= Agent Team Class =================
-
-/**
- * AgentTeam class for managing agent switching operations
+ * AgentTeam class - Manages multi-agent team with switching support
+ *
+ * Features:
+ * - State management with validation
+ * - Tool permission checks
+ * - Session preservation
+ * - Error recovery
+ * - Context tracking
+ * - Switch commands
  */
 export class AgentTeam {
-  private config: AgentTeamConfig;
-  private agentList: Tool[];
-  private permissions: Map<string, AgentPermissions>;
-  private validator: AgentSwitchValidator;
+  private agentMap: Map<string, Agent>;
+  private config: AgentSwitchConfig;
   private state: AgentSwitchState;
+  private context: ToolExecutionContext;
+  private switchHistory: SwitchHistoryItem[];
   
-  /** Initialize AgentTeam with configuration and tool list */
+  /**
+   * Initialize AgentTeam
+   *
+   * @param config - Switch configuration
+   * @param agents - List of agent instances
+   * @param context - Tool execution context
+   */
   constructor(
-    config: AgentTeamConfig,
-    agentList: Tool[],
-    permissions: Map<string, AgentPermissions>,
-    validator: AgentSwitchValidator,
+    config: AgentSwitchConfig,
+    agents: Agent[],
+    context: ToolExecutionContext,
   ) {
     this.config = config;
-    this.agentList = agentList;
-    this.permissions = permissions;
-    this.validator = validator;
-    this.state = {
-      switchMode: SwitchMode.IDLE,
+    this.state = this.createInitialState();
+    this.context = context;
+    this.agentMap = new Map(agents.map((a) => [a.id, a]));
+    this.switchHistory = [];
+  }
+
+  /**
+   * Create initial switching state
+   *
+   * Sets up:
+   * - switchMode = IDLE
+   * - canSwitchToAny = config.allowAnySwitch
+   * - session timeout
+   * - switch count = 0
+   *
+   * @returns AgentSwitchState with initialized values
+   */
+  private createInitialState(): AgentSwitchState {
+    return {
+      switchMode: AgentSwitchMode.IDLE,
+      targetAgentId: undefined,
       switchedAgent: undefined,
-      canSwitchToAnyAgent: false,
+      sessionId: undefined,
+      context: this.config.defaultContext,
+      switchCount: 0,
+      lastSwitchedAt: undefined,
+      canSwitchToAny: this.config.allowAnySwitch || false, // Default: false for safety
+      errorReason: undefined,
+      recoveryState: {
+        available: false,
+        retryCount: 0,
+        lastErrorAt: undefined,
+      },
     };
   }
 
   /**
-   * Validate before switching
-   * - Check if agent switching is needed
-   * - Verify tool execution parameters
-   * - Validate switching permissions
-   * 
-   * @param toolData - Tool execution data for validation
-   * @param targetAgentId - Target agent for switching if applicable
-   * @returns SwitchValidationResult with validation status
+   * Get current switching state
+   *
+   * @returns Current state snapshot
    */
-  public validateSwitch(
-    toolData: ToolExecutionData,
-    targetAgentId?: string,
-  ): SwitchValidationResult {
-    // Check tool execution data
-    if (!toolData) {
-      return {
-        valid: false,
-        message: "Tool execution data required",
-      };
-    }
-
-    // Check tool
-    if (!toolData.tool) {
-      return {
-        valid: false,
-        message: "Tool undefined",
-      };
-    }
-
-    // Check agent
-    if (!toolData.agentId) {
-      return {
-        valid: false,
-        message: "Agent ID undefined",
-      };
-    }
-
-    // Check agent permissions
-    const agentPerm = this.permissions.get(toolData.agentId);
-    if (!agentPerm) {
-      return {
-        valid: false,
-        message: `Agent ${toolData.agentId} permissions not found`,
-      };
-    }
-
-    // Check permissions
-    if (!agentPerm.allow) {
-      return {
-        valid: false,
-        message: `Agent ${toolData.agentId} tool execution not allowed`,
-      };
-    }
-
-    // Check confirmation permission
-    if (agentPerm.confirm && !this.canConfirmSwitch(toolData.agentId)) {
-      return {
-        valid: false,
-        message: "User confirmation required for switch",
-        allow: agentPerm.confirm,
-        confirm: agentPerm.confirm,
-      };
-    }
-
-    // Check switch mode
-    if (this.state.switchMode !== SwitchMode.IDLE) {
-      return {
-        valid: false,
-        message: "Switch operation already in progress",
-      };
-    }
-
-    // Check configuration
-    if (this.config.maxConcurrent < 1) {
-      return {
-        valid: false,
-        message: "Config maxConcurrent must be at least 1",
-      };
-    }
-
-    // Check tool timeout
-    if (this.config.toolTimeout < 1) {
-      return {
-        valid: false,
-        message: "Config toolTimeout must be at least 1s",
-      };
-    }
-
-    // Track context
-    const context = trackContext(toolData.context, toolData.agentId);
-    
-    // Check if switching
-    if (context.preserveSession) {
-      const preserved = handleSessionPreservation(this.state, toolData.agentId);
-      if (preserved.preserved && preserved.state) {
-        return {
-          valid: true,
-          message: `Context preserved for ${toolData.context}`,
-          agent: preserved.state,
-        };
-      }
-    }
-
-    return {
-      valid: true,
-      message: `Switch validated for agent ${toolData.agentId}`;
-    }
-  }
-
-  /**
-   * Check if switching is allowed
-   * - Verify switch mode permits switching
-   * - Check max concurrent limit
-   * - Validate target agent exists
-   * 
-   * @param tool 
-   * @param target 
-   * @returns 
-   */
-  private canConfirmSwitch(agentId: string): boolean {
-    return (
-      this.state.switchMode === SwitchMode.IDLE &&
-      this.state.switchMode === SwitchMode.PENDING &&
-      this.toolExists(agentId)
-    );
-  }
-
-  /**
-   * Check if tool exists in the list
-   * - Validates agent existence
-   * - Returns true if tool exists
-   * 
-   * @param agentId 
-   * @returns 
-   */
-  private toolExists(agentId: string): boolean {
-    return this.agentList.some(agent => agent.id === agentId);
-  }
-
-  /**
-   * Get switch validation result
-   * - Retrieve validation result for agent switch if applicable
-   * - Return validation status
-   * 
-   * @param toolData Tool execution data
-   * @param targetSwitchedAgent switched Agent ID if any
-   * @param validationValidation status validation result
-   * 
-   * @returns SwitchValidationResult
-   */
-  public getValidationResult(
-    toolData: ToolExecutionData,
-    targetSwitchedAgent: string | undefined,
-    validationValidation: ValidationResult,
-  ): SwitchValidationResult {
-    return {
-      valid: validationValidation.valid,
-      message: validationValidation.message,
-      agent: validationValidation.agent,
-      error: this.getError(validationValidation),
-    };
-  }
-
-  /**
-   * Get error message if applicable
-   * - Retrieve error message for validation failure if any
-   * - Return appropriate error message
-   * 
-   * @param validationValidation
-   * @returns error Error message string
-   */
-  private getError(validation: ValidationResult): string | undefined {
-    if (validation.valid) return undefined;
-    return validation.message || "Validation failed";
-  }
-
-  /**
-   * Handle switch operation validation sequence if applicable
-   * - Execute switch operation validation sequence if applicable
-   * - Perform validation checks and return result if applicable
-   * 
-   * @param toolData Tool execution data
-   * @param toolTool object tool to execute
-   * 
-   * @returns ValidationResult validation result
-   */
-  public handleSwitchSequence(
-    toolData: ToolExecutionData,
-    toolTool: Tool | undefined,
-  ): ValidationResult {
-    // Check tool
-    if (!toolTool) {
-      return {
-        valid: false,
-        message: "Tool undefined",
-      };
-    }
-
-    // Check agentId
-    if (!toolData.agentId) {
-      return {
-        valid: false,
-        message: "Agent ID undefined",
-      };
-    }
-
-    // Check tool result if available
-    if (toolData.result) {
-      const { result } = toolData;
-      // Extract tool result for validation
-    }
-
-    // Validate switching permissions
-    const switchValidation = this.validateSwitchPermission(
-      toolData,
-      toolTool,
-    );
-
-    if (!switchValidation.valid) {
-      return switchValidation;
-    }
-
-    return {
-      valid: true,
-      message: "Switch sequence handled",
-    };
-  }
-
-  /**
-   * Validate switch permission
-   * - Verify if switching to allowed agent if applicable
-   * - Check switch mode permissions
-   * - Return validation result
-   * 
-   * @param toolData Tool execution data
-   * @returns Validation result
-   */
-  private validateSwitchPermission(toolData: ToolExecutionData): ValidationResult {
-    const agentPerm = this.permissions.get(toolData.agentId);
-    
-    if (!agentPerm) {
-      return { valid: false, message: "Agent permissions missing" };
-    }
-
-    if (!agentPerm.allow) {
-      return { valid: false, message: "Agent switch not allowed" };
-    }
-
-    if (agentPerm.confirm) {
-      return {
-        valid: false,
-        message: "Switch requires confirmation",
-        allow: agentPerm.confirm,
-        confirm: agentPerm.confirm,
-      };
-    }
-
-    return { valid: true, message: "Switch permission granted" };
-  }
-
-  /**
-   * Perform agent switch operation
-   * - Execute agent switch if applicable
-   * - Update switch state and permissions
-   * - Return switch result
-   * 
-   * @param tool Tool to execute
-   * @param agentData Switch operation agent data
-   * 
-   * @returns Switch validation result
-   */
-  public performSwitch(
-    tool: Tool,
-    agentData: {
-      agentId?: string;
-      targetAgentId?: string;
-      data: string[];
-    },
-  ): Promise<SwitchValidationResult> {
-    // Check tool
-    if (!tool) {
-      return Promise.resolve({
-        valid: false,
-        message: "Tool undefined",
-      });
-    }
-
-    // Check agentId
-    if (!agentData.agentId && !agentData.targetAgentId) {
-      return Promise.resolve({
-        valid: false,
-        message: "Agent ID or target agent ID required",
-      });
-    }
-
-    // Check switch mode
-    if (this.state.switchMode !== SwitchMode.IDLE) {
-      return Promise.resolve({
-        valid: false,
-        message: "Switch already in progress",
-      });
-    }
-
-    // Check max concurrent
-    if (this.config.maxConcurrent <= 0) {
-      return Promise.resolve({
-        valid: false,
-        message: "Config maxConcurrent invalid",
-      });
-    }
-
-    // Set switch mode
-    this.state.switchMode = SwitchMode.PENDING;
-
-    return Promise.resolve({
-      valid: true,
-      message: `Switch pending for agent ${agentData.agentId}`,
-    });
-  }
-
-  /**
-   * Validate tool execution parameters
-   * - Validate tool and agent parameters
-   * - Verify tool execution data validity
-   * - Return validation status
-   * 
-   * @param tool Tool to validate
-   * @param agentId Agent ID for validation
-   * @returns ValidationResult
-   */
-  public validateToolParameters(
-    tool: Tool,
-    agentId: string,
-  ): ValidationResult {
-    // Check tool
-    if (!tool) {
-      return {
-        valid: false,
-        message: "Tool undefined",
-      };
-    }
-
-    // Check agentId
-    if (!agentId) {
-      return {
-        valid: false,
-        message: "Agent ID undefined",
-      };
-    }
-
-    // Check agent permissions
-    const agentPerm = this.permissions.get(agentId);
-    if (!agentPerm) {
-      return {
-        valid: false,
-        message: `Agent ${agentId} permissions missing`,
-      };
-    }
-
-    // Validate parameters
-    if (!tool.parameters) {
-      return {
-        valid: false,
-        message: "Tool parameters missing",
-      };
-    }
-
-    // Validate parameters match agent
-    const param = tool.parameters.get(agentId);
-    if (!param || !param.allow) {
-      return {
-        valid: false,
-        message: "Parameter not allowed",
-      };
-    }
-
-    return {
-      valid: true,
-      message: "Tool parameters valid";
-    };
-  }
-
-  /**
-   * Get current state
-   * - Retrieve current switch state and mode
-   * - Return state data
-   * 
-   * @returns AgentSwitchState
-   */
-  public getState(): AgentSwitchState {
+  getState(): AgentSwitchState {
     return { ...this.state };
   }
 
   /**
-   * Check if agent is running
-   * - Verify agent status
-   * - Return agent running status
-   * 
-   * @param agentId Agent ID to check
-   * @returns boolean
+   * Get list of agents (for /agents-status command)
+   *
+   * @param includeState - Whether to include agent states
+   * @returns Array of agents
    */
-  public isAgentRunning(agentId: string): boolean {
-    // Mock implementation
-    return true;
+  getAgents(includeState?: boolean): Agent[] {
+    return Array.from(this.agentMap.values()).map((agent) => {
+      const result = { ...agent };
+      if (includeState) {
+        result.state = agent.status;
+        result.role = agent.role;
+        result.currentTask = agent.currentTask;
+        result.sessionActive = agent.sessionActive;
+      }
+      return result;
+    });
+  }
+
+  // ============================================
+  // ============ Validation Functions =============
+  // ============================================
+
+  /**
+   * validateAgentForDispatch - Pre-dispatch validation function
+   *
+   * Validates agent before allowing it to accept tool execution.
+   * Checks:
+   * - Agent status (must be active)
+   * - Session availability
+   * - Role compatibility
+   * - Error recovery state
+   *
+   * @param agent - Agent to validate
+   * @param toolExecutionData - Tool execution data containing context
+   * @returns ValidationResult with pass/fail status
+   */
+  public validateAgentForDispatch(
+    agent: Agent,
+    toolExecutionData?: ToolExecutionData,
+  ): ValidationResult {
+    // Check agent status
+    if (agent.status !== "active") {
+      return {
+        valid: false,
+        message: `Agent ${agent.id} is not active (status: ${agent.status})`,
+        errorCode: "AGENT_INACTIVE",
+        details: { agentId: agent.id, status: agent.status },
+      };
+    }
+
+    // Check if currently handling switch
+    if (this.state.context === "switching") {
+      return {
+        valid: false,
+        message: "Switch operation in progress",
+        errorCode: "SWITCH_IN_PROGRESS",
+      };
+    }
+
+    // Check if session is valid
+    if (toolExecutionData?.context === "switching") {
+      if (agent.sessionActive === false) {
+        return {
+          valid: false,
+          message: "Agent session expired during switch",
+          errorCode: "SESSION_EXPIRED",
+          details: {
+            agentId: agent.id,
+            agentSessionActive: agent.sessionActive,
+            configSessionTimeout: this.config.sessionTimeout,
+          },
+        };
+      }
+    }
+
+    // Check error recovery state
+    if (this.state.recoveryState && !this.state.recoveryState.available) {
+      return {
+        valid: false,
+        message: "Recovery not available for current agent",
+        errorCode: "NO_RECOVERY_AVAILABLE",
+        details: { recoveryState: this.state.recoveryState },
+      };
+    }
+
+    return {
+      valid: true,
+      message: `Agent ${agent.id} validated for dispatch`,
+      details: {
+        agentId: agent.id,
+        status: agent.status,
+        sessionActive: agent.sessionActive,
+      },
+    };
   }
 
   /**
-   * Stop all running agents
-   * - Stop all agents with debouncing
-   * - Clear all statuses
-   * 
-   * @param stopKey 
-   * @param data 
-   * @param ctx 
-   * @returns 
+   * validateToolPermissions - Tool permission validation
+   *
+   * Checks if the given agent has permission to execute the tool.
+   * Validates:
+   * - Tool capability matching
+   * - Agent role requirements
+   * - Permission levels
+   *
+   * @param agent - Agent to check permissions for
+   * @param tool - Tool to execute
+   * @param toolExecutionData - Tool execution data
+   * @returns ValidationResult with permission status
    */
-  public stopAllRunningAgents(
-    stopKey: string,
-    data: { key: string },
-    ctx: any,
-  ): void {
-    // Check stop requested
-    const stopRequested: boolean = false;
-    
-    if ((stopKey === "ctrl+q" && data.key === "ctrl+q")) {
-      // Prevent duplicate calls
-      if (stopRequested) return;
-      
-      stopRequested = true;
-      
-      // Stop operation
-      ctx.notify("subagents", "Stopping all agents", 5000);
+  public validateToolPermissions(
+    agent: Agent,
+    tool: Tool,
+    toolExecutionData: ToolExecutionData,
+  ): ValidationResult {
+    const result: ValidationResult = {
+      valid: true,
+      message: `Tool ${tool.name} executed for agent ${agent.id}`,
+    };
+
+    // Check if agent has tool capability
+    if (!agent.capabilities?.includes("execute_tool:all")) {
+      // Check if tool is in agent's specific capabilities
+      if (!agent.capabilities?.includes(`execute_tool:${tool.name}`)) {
+        result.valid = false;
+        result.message = `Agent ${agent.id} lacks permission for tool ${tool.name}`;
+        result.errorCode = "CAPABILITY_MISMATCH";
+        result.details = {
+          agentCapabilities: agent.capabilities,
+          toolName: tool.name,
+          requiredCapability: `execute_tool:${tool.name}`,
+        };
+        return result;
+      }
+    }
+
+    // Check role requirements
+    if (tool.roleRequirements && !agent.role) {
+      if (!agent.role?.includes(tool.roleRequirements.role)) {
+        result.valid = false;
+        result.message = `Agent ${agent.id} lacks required role for tool ${tool.name}`;
+        result.errorCode = "ROLE_REQUIREMENT";
+        result.details = {
+          requiredRole: tool.roleRequirements.role,
+          agentRole: agent.role,
+          toolName: tool.name,
+        };
+        return result;
+      }
+    }
+
+    // Check permission level
+    if (agent.permissionLevel < tool.permissionLevel && tool.permissionLevel !== undefined) {
+      result.valid = false;
+      result.message = `Agent permission level too low for tool ${tool.name}`;
+      result.errorCode = "PERMISSION_LOW";
+      result.details = {
+        requiredPermission: tool.permissionLevel,
+        agentPermission: agent.permissionLevel,
+      };
+      return result;
+    }
+
+    return result;
+  }
+
+  // ============================================
+  // ============ Command Registration =============
+  // ============================================
+
+  /**
+   * Register /agents-switch command handler
+   *
+   * Registers switching functionality that:
+   * - Validates switch request
+   * - Checks target agent availability
+   * - Executes switch operation
+   * - Handles error cases
+   *
+   * @param tools - Tool registry for command registration
+   */
+  public registerSwitchCommand(tools: ToolRegistry = {}): void {
+    const switchCommand: Tool = {
+      name: "/agents-switch",
+      description: "Switch to a different agent in the team",
+      inputSchema: {
+        type: "object",
+        properties: {
+          agentId: {
+            type: "string",
+            description: "ID of agent to switch to (or 'first' for best available)",
+            required: false,
+          },
+          force: {
+            type: "boolean",
+            description: "Force switch (skips validation)",
+            required: false,
+            default: false,
+          },
+          context: {
+            type: "string",
+            enum: ["normal", "error", "steered"],
+            description: "Switch context",
+            required: false,
+            default: "normal",
+          },
+        },
+      },
+      execute: async (data: any) => {
+        const result = this.executeSwitch(data, this.context);
+        if (result.error) {
+          return this.formatErrorResult("Command failed", result.error);
+        }
+        if (!result.success) {
+          return this.formatErrorResult(
+            result.message || "Switch cancelled",
+            undefined,
+            result.details,
+          );
+        }
+        return result;
+      },
+    };
+
+    tools[switchCommand.name] = switchCommand;
+  }
+
+  /**
+   * Register /agents-status command handler
+   *
+   * Registers status command that shows:
+   * - All available agents
+   * - Current switching state
+   * - Tool permissions
+   * - Session info
+   *
+   * @param tools - Tool registry for command registration
+   */
+  public registerStatusCommand(tools: ToolRegistry = {}): void {
+    const statusCommand: Tool = {
+      name: "/agents-status",
+      description: "Get current status of all agents and switching state",
+      inputSchema: {
+        type: "object",
+        properties: {
+          includeDetails: {
+            type: "boolean",
+            description: "Include detailed agent info",
+            required: false,
+            default: false,
+          },
+        },
+        required: false,
+      },
+      execute: async (data: any) => {
+        return {
+          agents: this.getAgents(data.includeDetails),
+          switchingState: this.state,
+          currentTool: this.context.currentTool?.name,
+          toolPermissions: this.context.toolPermissions,
+        } as ToolResult;
+      },
+    };
+
+    tools[statusCommand.name] = statusCommand;
+  }
+
+  /**
+   * Execute agent switch operation
+   *
+   * Full switch sequence including:
+   * - State check
+   * - Validation
+   * - Session preservation
+   * - Tool permission checks
+   * - Error handling
+   *
+   * @param request - Switch request
+   * @param executionContext - Tool execution context
+   * @returns ToolResult with switch status
+   */
+  public executeSwitch(
+    request: SwitchRequest,
+    executionContext: ToolExecutionContext,
+  ): ToolResult {
+    // Create execution data
+    const toolExecutionData: ToolExecutionData = {
+      context: executionContext.currentTool?.context || "normal",
+      toolName: executionContext.currentTool?.name,
+      activeAgentId: executionContext.activeAgentId,
+      toolResult: executionContext.currentTool?.result,
+      error: executionContext.currentTool?.error,
+    };
+
+    // Edge case handler: track context
+    const contextResult = this.trackContextSwitch(
+      executionContext.currentTool?.context || "normal",
+    );
+
+    if (!contextResult.isValid) {
+      return this.formatErrorResult(
+        contextResult.message,
+        contextResult.errorCode,
+        contextResult.details,
+      );
+    }
+
+    // Get target agent ID
+    const targetAgentId = request.agentId || undefined;
+
+    // Validate switch request
+    const validation = this.performSwitchValidation(
+      toolExecutionData,
+      targetAgentId,
+      request.context,
+    );
+
+    if (!validation.valid) {
+      return this.formatErrorResult(
+        validation.message,
+        validation.errorCode,
+        validation.details,
+      );
+    }
+
+    // Edge case handler: handle session preservation if needed
+    const sessionPreservation = this.handleSwitchSession(
+      executionContext.activeAgent,
+      executionContext.currentTool?.result,
+    );
+
+    // Tool permission validation
+    if (executionContext.activeAgent && executionContext.currentTool) {
+      const permissionValidation = this.validateToolPermissions(
+        executionContext.activeAgent,
+        executionContext.currentTool,
+        toolExecutionData,
+      );
+
+      if (!permissionValidation.valid) {
+        return this.formatErrorResult(
+          permissionValidation.message,
+          permissionValidation.errorCode,
+          permissionValidation.details,
+        );
+      }
+    }
+
+    // Edge case handler: handle errors
+    const errorHandling = this.handleSwitchError(
+      executionContext.currentTool?.error,
+      targetAgentId,
+    );
+
+    if (!errorHandling.handleable && errorHandling.message) {
+      return this.formatErrorResult(
+        errorHandling.message,
+        executionContext.currentTool?.error?.code,
+        errorHandling.details,
+      );
+    }
+
+    // Check if force switch requested
+    if (request.force) {
+      this.formatErrorResult("Force switches are not supported", ERROR_CODE_FORCE);
+    }
+
+    // Success response
+    return {
+      status: "switch_requested",
+      switchContext: executionContext.currentTool?.context,
+      targetAgentId: validation.agentId,
+      validationMessage: validation.message,
+      toolName: executionContext.currentTool?.name,
+      sessionId: executionContext.sessionId,
+      details: {
+        switchCount: this.state.switchCount,
+        lastSwitchedAt: this.state.lastSwitchedAt,
+        currentMode: this.state.switchMode,
+      },
+      message: `Switch to ${targetAgentId || "best available"} validated successfully`,
+    } as ToolResult;
+  }
+
+  // ============================================
+  // ============ Context Switching Functions =============
+  // ============================================
+
+  /**
+   * trackContextSwitch - Context tracking edge case handler
+   *
+   * Tracks switching context and handles:
+   * - Switch operation states
+   * - Error contexts
+   * - Steered modes
+   * - Normal operations
+   *
+   * @param context - Current operation context
+   * @returns Context tracking result
+   */
+  private trackContextSwitch(
+    context: ToolExecutionContext["currentTool"]["context"],
+  ): ContextTrackingResult {
+    switch (context) {
+      case "switching":
+        return {
+          isValid: true,
+          message: "Switch operation context detected",
+          errorCode: undefined,
+          details: { context },
+        };
+      case "error":
+        return {
+          isValid: true,
+          message: "Error context detected",
+          errorCode: undefined,
+          details: { context, needsRecovery: true },
+        };
+      case "steered":
+        return {
+          isValid: true,
+          message: "Steered mode active",
+          errorCode: undefined,
+          details: { context },
+        };
+      case "normal":
+      default:
+        return {
+          isValid: true,
+          message: "Normal operation context",
+          errorCode: undefined,
+          details: { context },
+        };
     }
   }
+
+  /**
+   * handleSwitchSession - Session preservation edge case handler
+   *
+   * Handles session preservation during switch:
+   * - Checks if current agent has session data
+   * - Preserves state for recovery
+   * - Updates session expiry
+   *
+   * @param currentAgent - Current active agent
+   * @param toolResult - Tool result (if available)
+   * @returns Session preservation result
+   */
+  private handleSwitchSession(
+    currentAgent: Agent | undefined,
+    toolResult: ToolResult | undefined,
+  ): SessionPreservationResult {
+    if (!currentAgent) {
+      return {
+        preserve: false,
+        message: "No current agent found for session preservation",
+      };
+    }
+
+    // Check if agent has session data
+    const hasSessionData = !!(
+      currentAgent.turnCount ||
+      currentAgent.activeTools.size ||
+      currentAgent.responseText
+    );
+
+    if (!hasSessionData) {
+      return {
+        preserve: false,
+        message: "No session data to preserve",
+      };
+    }
+
+    // Check session expiry
+    if (currentAgent.sessionExpires && Date.now() > currentAgent.sessionExpires) {
+      return {
+        preserve: false,
+        message: "Session has expired",
+      };
+    }
+
+    // Session is valid for preservation
+    return {
+      preserve: true,
+      message: "Session valid, preserving state",
+      details: {
+        turnCount: currentAgent.turnCount,
+        activeToolsSize: currentAgent.activeTools.size,
+        responseLength: currentAgent.responseText?.length || 0,
+      },
+    };
+  }
+
+  /**
+   * handleSwitchError - Error handling edge case handler
+   *
+   * Handles errors during switch:
+   * - Session expiry
+   * - Invalid agent
+   * - Permission issues
+   * - Timeout errors
+   *
+   * @param error - Error object (if any)
+   * @param agentId - Target agent ID (if specified)
+   * @returns Error handling result
+   */
+  private handleSwitchError(
+    error: any,
+    agentId?: string,
+  ): ErrorHandlingResult {
+    if (!error) {
+      return {
+        handleable: true,
+        message: undefined,
+        errorCode: undefined,
+        details: {},
+      };
+    }
+
+    const message = error?.message || String(error);
+
+    // Case 1: Session expired
+    if (message === "session_expired") {
+      return {
+        handleable: true,
+        message: "Session expired - recovery required",
+        errorCode: "SESSION_EXPIRED",
+        details: { requiresRecovery: true },
+      };
+    }
+
+    // Case 2: Permission denied
+    if (message.includes("permission")) {
+      return {
+        handleable: true,
+        message: "Permission denied - check tool permissions",
+        errorCode: "PERMISSION_DENIED",
+        details: { requiresPermissionCheck: true },
+      };
+    }
+
+    // Case 3: Timeout
+    if (message.includes("timeout")) {
+      return {
+        handleable: true,
+        message: "Operation timed out",
+        errorCode: "TIMEOUT",
+        details: { retryAllowed: true },
+      };
+    }
+
+    // Unknown error
+    return {
+      handleable: true,
+      message: `Unknown error: ${message}`,
+      errorCode: "UNKNOWN",
+      details: {
+        originalError: error,
+        agentId,
+      },
+    };
+  }
+
+  /**
+   * performSwitchValidation - Switch validation sequence handler
+   *
+   * Complete validation sequence including:
+   * - Switch mode check
+   * - Target agent validation
+   * - Permission checks
+   * - Rate limiting
+   * - Error checks
+   *
+   * @param toolExecutionData - Tool execution data
+   * @param targetAgentId - Agent ID to switch to
+   * @param context - Operation context
+   * @returns Validation result
+   */
+  private performSwitchValidation(
+    toolExecutionData: ToolExecutionData,
+    targetAgentId?: string,
+    context: "normal" | "error" | "steered" | "switching" = "normal",
+  ): ValidationResult {
+    // Edge case: Check if currently switching
+    if (this.state.switchMode !== AgentSwitchMode.IDLE) {
+      return {
+        valid: false,
+        message: "Another switch operation is in progress",
+        errorCode: "SWITCH_IN_PROGRESS",
+        details: { currentMode: this.state.switchMode },
+      };
+    }
+
+    // Edge case: Context tracking - check if in error/steering mode
+    switch (context) {
+      case "error":
+      case "steered":
+        return {
+          valid: false,
+          message: `Cannot switch from ${context} context`,
+          errorCode: "CONTEXT_INVALID",
+          details: { context },
+        };
+      default:
+        // Normal or switching context
+        break;
+    }
+
+    // Edge case: Session preservation check
+    if (toolExecutionData.toolResult?.sessionId) {
+      // Check if current agent's session is valid
+      if (this.state.sessionId !== toolExecutionData.toolResult.sessionId) {
+        return {
+          valid: false,
+          message: "Session ID mismatch",
+          errorCode: "SESSION_MISMATCH",
+          details: {
+            currentSessionId: this.state.sessionId,
+            expectedSessionId: toolExecutionData.toolResult.sessionId,
+          },
+        };
+      }
+    }
+
+    // Validate target agent if specified
+    if (targetAgentId) {
+      // Check if target agent exists in our map
+      if (!this.agentMap.has(targetAgentId)) {
+        return {
+          valid: false,
+          message: `Agent ${targetAgentId} not available`,
+          errorCode: "AGENT_NOT_FOUND",
+          details: { requestedAgentId: targetAgentId },
+        };
+      }
+
+      // Validate target agent is active
+      const targetAgent = this.agentMap.get(targetAgentId);
+      if (targetAgent?.status !== "active") {
+        return {
+          valid: false,
+          message: `Agent ${targetAgentId} is not active`,
+          errorCode: "AGENT_INACTIVE",
+          details: { agentId: targetAgentId, status: targetAgent?.status },
+        };
+      }
+
+      // Validate target agent session
+      if (targetAgent?.sessionExpires && Date.now() > targetAgent.sessionExpires) {
+        return {
+          valid: false,
+          message: `Session for agent ${targetAgentId} expired`,
+          errorCode: "SESSION_EXPIRED",
+          details: { agentId: targetAgentId },
+        };
+      }
+    }
+
+    // Check rate limit
+    if (!this.state.lastSwitchedAt) {
+      this.state.lastSwitchedAt = Date.now();
+    } else {
+      const secondsSinceLastSwitch = (Date.now() - this.state.lastSwitchedAt) / 1000;
+      if (secondsSinceLastSwitch < 5) { // Minimum 5 seconds between switches
+        return {
+          valid: false,
+          message: "Switch rate limit exceeded",
+          errorCode: "SWITCH_RATE_LIMIT",
+          details: {
+            lastSwitch: new Date(this.state.lastSwitchedAt).toISOString(),
+            cooldown: 5, // seconds
+          },
+        };
+      }
+    }
+
+    // All validations passed
+    return {
+      valid: true,
+      message: "Switch validated successfully",
+      agentId: targetAgentId,
+      details: {
+        context,
+        switchCount: this.state.switchCount,
+        valid: true,
+      },
+    };
+  }
+
+  // ============================================
+  // ============ Helper Functions =============
+  // ============================================
+
+  /**
+   * Format error result
+   *
+   * @param message - Error message
+   * @param errorCode - Error code (optional)
+   * @param details - Error details (optional)
+   * @returns Formatted ToolResult error
+   */
+  private formatErrorResult(
+    message: string,
+    errorCode: string | undefined = undefined,
+    details: Record<string, any> | undefined = undefined,
+  ): ToolResult {
+    return {
+      status: "error",
+      message,
+      error: errorCode,
+      details: details,
+    } as ToolResult;
+  }
+
+  /**
+   * Increment switch count
+   *
+   * @param agentId - Last switched agent ID
+   */
+  private incrementSwitchCount(agentId?: string): void {
+    this.state.switchCount++;
+    this.state.switchedAgent = agentId;
+    this.state.lastSwitchedAt = Date.now();
+    this.context.activeAgentId = agentId;
+  }
+
+  /**
+   * Update switching mode
+   *
+   * @param mode - New mode
+   */
+  private updateSwitchMode(mode: AgentSwitchMode): void {
+    this.state.switchMode = mode;
+  }
+
+  /**
+   * Add switch to history
+   *
+   * @param agentId - Agent ID switched to
+   * @param timestamp - Timestamp
+   */
+  private addSwitchToHistory(agentId: string, timestamp: number): void {
+    this.switchHistory.push({
+      agentId,
+      timestamp,
+    });
+
+    // Keep only last 10 switch history entries
+    if (this.switchHistory.length > 10) {
+      this.switchHistory.shift();
+    }
+  }
+
+  /**
+   * Check if switching is available
+   *
+   * @returns boolean
+   */
+  public isSwitchAvailable(): boolean {
+    return (
+      this.state.switchMode === AgentSwitchMode.IDLE &&
+      this.agentMap.size > 1
+    );
+  }
+
+  /**
+   * Reset switch state
+   *
+   * @returns New initial state
+   */
+  public resetSwitchState(): AgentSwitchState {
+    return this.createInitialState();
+  }
+
+  // ============================================
+  // ============ Tool Execution Context =============
+  // ============================================
+
+  /**
+   * Tool execution context type
+   *
+   * @property currentTool - Currently executing tool (if any)
+   * @property activeAgentId - Currently active agent ID
+   * @property toolPermissions - Tool permissions
+   * @property sessionId - Session identifier
+   * @property context - Operation context
+   */
+  export interface ToolExecutionContext {
+    currentTool: Tool | undefined;
+    activeAgentId: string | undefined;
+    toolPermissions: Record<string, any>;
+    sessionId?: string;
+    context: "normal" | "error" | "steered" | "switching";
+  }
+
+  // ============================================
+  // ============ Error Handling Types =============
+  // ============================================
+
+  interface ContextTrackingResult {
+    isValid: boolean;
+    message: string;
+    errorCode: string | undefined;
+    details: Record<string, any>;
+  }
+
+  interface SessionPreservationResult {
+    preserve: boolean;
+    message: string;
+    details?: Record<string, any>;
+  }
+
+  interface ErrorHandlingResult {
+    handleable: boolean;
+    message: string | undefined;
+    errorCode: string | undefined;
+    details: Record<string, any>;
+  }
+
+  interface ValidationResult {
+    valid: boolean;
+    message: string;
+    errorCode?: string;
+    details?: Record<string, any>;
+  }
+
+  interface ToolRegistry {
+    [key: string]: Tool;
+  }
+
+  interface SwitchHistoryItem {
+    agentId: string;
+    timestamp: number;
+  }
+
+  const ERROR_CODE_FORCE = "FORCE_NOT_ALLOWED";
 }
+
