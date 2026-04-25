@@ -45,6 +45,7 @@ interface AgentState {
 	contextPct: number;
 	sessionFile: string | null;
 	runCount: number;
+	activeTools: Set<string>;
 }
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -195,6 +196,7 @@ export default function (pi: ExtensionAPI) {
 				contextPct: 0,
 				sessionFile: existsSync(sessionFile) ? sessionFile : null,
 				runCount: 0,
+				activeTools: new Set(),
 			});
 		}
 	}
@@ -287,8 +289,24 @@ export default function (pi: ExtensionAPI) {
 
 						if (state.status === "running") {
 							const activityBranch = isLast ? "   " : "│  ";
-							const workText = state.lastWork || "thinking...";
-							lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("dim", `  ⎿  ${truncateToWidth(workText, width - 10)}`), width));
+
+							if (state.activeTools.size > 0) {
+								const toolNames = Array.from(state.activeTools).join(", ");
+								lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("accent", `  ⎿  using: ${toolNames}...`), width));
+							} else {
+								const workText = state.lastWork || "thinking...";
+								const workLines = workText.split("\n").filter(l => l.trim()).slice(-3);
+
+								if (workLines.length === 0) {
+									lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("dim", "  ⎿  thinking..."), width));
+								} else {
+									for (let j = 0; j < workLines.length; j++) {
+										const isLastWorkLine = j === workLines.length - 1;
+										const workBranch = isLastWorkLine ? "⎿ " : "  ";
+										lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("dim", `  ${workBranch} ${truncateToWidth(workLines[j], width - 10)}`), width));
+									}
+								}
+							}
 						}
 					}
 
@@ -333,6 +351,7 @@ export default function (pi: ExtensionAPI) {
 		state.elapsed = 0;
 		state.lastWork = "";
 		state.runCount++;
+		state.activeTools.clear();
 		ensureGlobalInterval();
 		updateWidget();
 
@@ -390,12 +409,19 @@ export default function (pi: ExtensionAPI) {
 							if (delta?.type === "text_delta") {
 								textChunks.push(delta.delta || "");
 								const full = textChunks.join("");
-								const last = full.split("\n").filter((l: string) => l.trim()).pop() || "";
-								state.lastWork = last;
+								state.lastWork = full;
 								updateWidget();
 							}
 						} else if (event.type === "tool_execution_start") {
 							state.toolCount++;
+							if (event.toolCall?.name) {
+								state.activeTools.add(event.toolCall.name);
+							}
+							updateWidget();
+						} else if (event.type === "tool_execution_end") {
+							if (event.toolCall?.name) {
+								state.activeTools.delete(event.toolCall.name);
+							}
 							updateWidget();
 						} else if (event.type === "message_end") {
 							const msg = event.message;
@@ -438,7 +464,8 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				const full = textChunks.join("");
-				state.lastWork = full.split("\n").filter((l: string) => l.trim()).pop() || "";
+				state.lastWork = full;
+				state.activeTools.clear();
 				stopGlobalIntervalIfNoRunning();
 				updateWidget();
 
@@ -457,6 +484,7 @@ export default function (pi: ExtensionAPI) {
 			proc.on("error", (err) => {
 				state.status = "error";
 				state.lastWork = `Error: ${err.message}`;
+				state.activeTools.clear();
 				stopGlobalIntervalIfNoRunning();
 				updateWidget();
 				resolve({
