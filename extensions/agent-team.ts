@@ -306,27 +306,49 @@ export default function (pi: ExtensionAPI) {
 							if (state.activeTools.size > 0) {
 								const toolNames = Array.from(state.activeTools).join(", ");
 								lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("accent", `  ⎿  using: ${toolNames}...`), width));
-							} else if (state.lastThinking) {
-								const lastThinkChunk = state.lastThinking.split("\n").filter(l => l.trim()).pop() || "";
-								const wrappedThink = wrapLine(`thinking: ${lastThinkChunk}`, width - 15).slice(0, 3);
-								
-								for (let j = 0; j < wrappedThink.length; j++) {
-									const isLastLine = j === wrappedThink.length - 1;
-									const branch = isLastLine ? "⎿ " : "  ";
-									lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("dim", `  ${branch} `) + theme.fg("dim", theme.italic(wrappedThink[j])), width));
-								}
 							} else {
-								const workText = state.lastWork || "thinking...";
-								const lastWorkChunk = workText.split("\n").filter(l => l.trim()).pop() || "";
-								const wrappedWork = wrapLine(lastWorkChunk, width - 15).slice(0, 3);
+								const workText = (state.lastWork || "").trim();
+								const thinkText = (state.lastThinking || "").trim();
+								const linesToRender: { text: string; italic?: boolean; dim?: boolean }[] = [];
 
-								if (wrappedWork.length === 0) {
+								if (thinkText && workText) {
+									// Both present: 1 line thinking, up to 2 lines work
+									const lastThinkChunk = thinkText.split("\n").filter(l => l.trim()).pop() || "";
+									linesToRender.push({ text: `thinking: ${lastThinkChunk}`, italic: true, dim: true });
+									
+									const lastWorkChunk = workText.split("\n").filter(l => l.trim()).pop() || "";
+									const wrappedWork = wrapLine(lastWorkChunk, width - 15).slice(0, 2);
+									for (const lw of wrappedWork) {
+										linesToRender.push({ text: lw });
+									}
+								} else if (thinkText) {
+									// Only thinking: up to 3 lines
+									const lastThinkChunk = thinkText.split("\n").filter(l => l.trim()).pop() || "";
+									const wrappedThink = wrapLine(`thinking: ${lastThinkChunk}`, width - 15).slice(0, 3);
+									for (const lt of wrappedThink) {
+										linesToRender.push({ text: lt, italic: true, dim: true });
+									}
+								} else {
+									// Only work (or default "thinking...")
+									const displayWork = workText || "thinking...";
+									const lastWorkChunk = displayWork.split("\n").filter(l => l.trim()).pop() || "";
+									const wrappedWork = wrapLine(lastWorkChunk, width - 15).slice(0, 3);
+									for (const lw of wrappedWork) {
+										linesToRender.push({ text: lw });
+									}
+								}
+
+								if (linesToRender.length === 0) {
 									lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("dim", "  ⎿  thinking..."), width));
 								} else {
-									for (let j = 0; j < wrappedWork.length; j++) {
-										const isLastLine = j === wrappedWork.length - 1;
+									for (let j = 0; j < linesToRender.length; j++) {
+										const isLastLine = j === linesToRender.length - 1;
 										const branch = isLastLine ? "⎿ " : "  ";
-										lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("dim", `  ${branch} ${wrappedWork[j]}`), width));
+										const item = linesToRender[j];
+										let content = item.text;
+										if (item.italic) content = theme.italic(content);
+										
+										lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("dim", `  ${branch} `) + theme.fg(item.dim ? "dim" : "muted", content), width));
 									}
 								}
 							}
