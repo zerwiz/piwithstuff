@@ -45,8 +45,9 @@ interface AgentState {
 	contextPct: number;
 	sessionFile: string | null;
 	runCount: number;
-	timer?: ReturnType<typeof setInterval>;
 }
+
+const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 // ── Display Name Helper ──────────────────────────
 
@@ -139,10 +140,11 @@ export default function (pi: ExtensionAPI) {
 	let allAgentDefs: AgentDef[] = [];
 	let teams: Record<string, string[]> = {};
 	let activeTeamName = "";
-	let gridCols = 2;
 	let widgetCtx: any;
 	let sessionDir = "";
 	let contextWindow = 0;
+	let widgetFrame = 0;
+	let globalInterval: ReturnType<typeof setInterval> | undefined;
 
 	function loadAgents(cwd: string) {
 		// Create session storage dir
@@ -195,65 +197,63 @@ export default function (pi: ExtensionAPI) {
 				runCount: 0,
 			});
 		}
-
-		// Auto-size grid columns based on team size
-		const size = agentStates.size;
-		gridCols = size <= 3 ? size : size === 4 ? 2 : 3;
 	}
 
-	// ── Grid Rendering ───────────────────────────
+	function ensureGlobalInterval() {
+		if (globalInterval) return;
+		globalInterval = setInterval(() => {
+			widgetFrame++;
+			updateWidget();
+		}, 80);
+	}
 
-	function renderCard(state: AgentState, colWidth: number, theme: any): string[] {
-		const w = colWidth - 2;
-		// Use visibleWidth() and truncateToWidth() for proper UTF-8 width handling
-		const truncate = (s: string, max: number) => {
-			const visWidth = visibleWidth(s);
-			return visWidth <= max ? s : truncateToWidth(s, max - 3) + "...";
-		};
+	function stopGlobalIntervalIfNoRunning() {
+		const anyRunning = Array.from(agentStates.values()).some(s => s.status === "running");
+		if (!anyRunning && globalInterval) {
+			clearInterval(globalInterval);
+			globalInterval = undefined;
+		}
+	}
 
-		const statusColor = state.status === "idle" ? "dim"
-			: state.status === "running" ? "accent"
-			: state.status === "done" ? "success" : "error";
-		const statusIcon = state.status === "idle" ? "○"
-			: state.status === "running" ? "●"
-			: state.status === "done" ? "✓" : "✗";
+	// ── Rendering ────────────────────────────────
 
-		const name = displayName(state.def.name);
-		const nameStr = theme.fg("accent", theme.bold(truncate(name, w)));
-		const nameVisible = visibleWidth(theme.fg("accent", theme.bold(truncate(name, w))));
+	function renderAgentLine(state: AgentState, theme: any): string {
+		const frame = SPINNER[widgetFrame % SPINNER.length];
+		let icon = theme.fg("dim", "○");
+		let nameColor = "dim";
+		let descColor = "dim";
 
-		const statusStr = `${statusIcon} ${state.status}`;
-		const timeStr = state.status !== "idle" ? ` ${Math.round(state.elapsed / 1000)}s` : "";
-		const statusLine = theme.fg(statusColor, statusStr + timeStr);
-		const statusVisible = visibleWidth(statusStr + timeStr);
+		if (state.status === "running") {
+			icon = theme.fg("accent", frame);
+			nameColor = "accent";
+			descColor = "muted";
+		} else if (state.status === "done") {
+			icon = theme.fg("success", "✓");
+			nameColor = "dim";
+			descColor = "dim";
+		} else if (state.status === "error") {
+			icon = theme.fg("error", "✗");
+			nameColor = "error";
+			descColor = "dim";
+		}
 
-		// Context bar: 5 blocks + percent
-		const filled = Math.ceil(state.contextPct / 20);
-		const bar = "#".repeat(filled) + "-".repeat(5 - filled);
-		const ctxStr = `[${bar}] ${Math.ceil(state.contextPct)}%`;
-		const ctxLine = theme.fg("dim", ctxStr);
-		const ctxVisible = ctxStr.length;
+		const name = theme.bold(displayName(state.def.name));
+		const desc = state.task ? state.task : state.def.description;
+		const parts: string[] = [];
 
-		const workRaw = state.task
-			? (state.lastWork || state.task)
-			: state.def.description;
-		const workText = truncate(workRaw, Math.min(50, w - 1));
-		const workLine = theme.fg("muted", workText);
-		const workVisible = workText.length;
+		if (state.status !== "idle") {
+			parts.push(`${Math.round(state.elapsed / 1000)}s`);
+			if (state.toolCount > 0) parts.push(`${state.toolCount} tool${state.toolCount === 1 ? "" : "s"}`);
+		}
 
-		const top = "┌" + "─".repeat(w) + "┐";
-		const bot = "└" + "─".repeat(w) + "┘";
-		const border = (content: string, visLen: number) =>
-			theme.fg("dim", "│") + content + " ".repeat(Math.max(0, w - visLen)) + theme.fg("dim", "│");
+		if (state.contextPct > 0) {
+			const filled = Math.ceil(state.contextPct / 20);
+			const bar = "#".repeat(filled) + "-".repeat(5 - filled);
+			parts.push(`[${bar}] ${Math.ceil(state.contextPct)}%`);
+		}
 
-		return [
-			theme.fg("dim", top),
-			border(" " + nameStr, 1 + nameVisible),
-			border(" " + statusLine, 1 + statusVisible),
-			border(" " + ctxLine, 1 + ctxVisible),
-			border(" " + workLine, 1 + workVisible),
-			theme.fg("dim", bot),
-		];
+		const stats = parts.length > 0 ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}` : "";
+		return `${icon} ${theme.fg(nameColor, name)}  ${theme.fg(descColor, truncateToWidth(desc, 50))}${stats}`;
 	}
 
 	function updateWidget() {
@@ -269,28 +269,30 @@ export default function (pi: ExtensionAPI) {
 						return text.render(width);
 					}
 
-					const cols = Math.min(gridCols, agentStates.size);
-					const gap = 1;
-					const colWidth = Math.floor((width - gap * (cols - 1)) / cols);
+					const anyRunning = Array.from(agentStates.values()).some(s => s.status === "running");
+					const headingColor = anyRunning ? "accent" : "dim";
+					const headingIcon = anyRunning ? "●" : "○";
+
+					const lines: string[] = [
+						truncateToWidth(theme.fg(headingColor, headingIcon) + " " + theme.fg(headingColor, `Team: ${activeTeamName}`), width)
+					];
+
 					const agents = Array.from(agentStates.values());
-					const rows: string[][] = [];
+					for (let i = 0; i < agents.length; i++) {
+						const state = agents[i];
+						const isLast = i === agents.length - 1;
+						const branch = isLast ? "└─" : "├─";
 
-					for (let i = 0; i < agents.length; i += cols) {
-						const rowAgents = agents.slice(i, i + cols);
-						const cards = rowAgents.map(a => renderCard(a, colWidth, theme));
+						lines.push(truncateToWidth(theme.fg("dim", branch) + " " + renderAgentLine(state, theme), width));
 
-						while (cards.length < cols) {
-							cards.push(Array(6).fill(" ".repeat(colWidth)));
-						}
-
-						const cardHeight = cards[0].length;
-						for (let line = 0; line < cardHeight; line++) {
-							rows.push(cards.map(card => card[line] || ""));
+						if (state.status === "running") {
+							const activityBranch = isLast ? "   " : "│  ";
+							const workText = state.lastWork || "thinking...";
+							lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("dim", `  ⎿  ${truncateToWidth(workText, width - 10)}`), width));
 						}
 					}
 
-					const output = rows.map(cols => cols.join(" ".repeat(gap)));
-					text.setText(output.join("\n"));
+					text.setText(lines.join("\n"));
 					return text.render(width);
 				},
 				invalidate() {
@@ -331,13 +333,10 @@ export default function (pi: ExtensionAPI) {
 		state.elapsed = 0;
 		state.lastWork = "";
 		state.runCount++;
+		ensureGlobalInterval();
 		updateWidget();
 
 		const startTime = Date.now();
-		state.timer = setInterval(() => {
-			state.elapsed = Date.now() - startTime;
-			updateWidget();
-		}, 1000);
 
 		const model = ctx.model
 			? `${ctx.model.provider}/${ctx.model.id}`
@@ -385,6 +384,7 @@ export default function (pi: ExtensionAPI) {
 					if (!line.trim()) continue;
 					try {
 						const event = JSON.parse(line);
+						state.elapsed = Date.now() - startTime;
 						if (event.type === "message_update") {
 							const delta = event.assistantMessageEvent;
 							if (delta?.type === "text_delta") {
@@ -429,7 +429,6 @@ export default function (pi: ExtensionAPI) {
 					} catch {}
 				}
 
-				clearInterval(state.timer);
 				state.elapsed = Date.now() - startTime;
 				state.status = code === 0 ? "done" : "error";
 
@@ -440,6 +439,7 @@ export default function (pi: ExtensionAPI) {
 
 				const full = textChunks.join("");
 				state.lastWork = full.split("\n").filter((l: string) => l.trim()).pop() || "";
+				stopGlobalIntervalIfNoRunning();
 				updateWidget();
 
 				ctx.ui.notify(
@@ -455,9 +455,9 @@ export default function (pi: ExtensionAPI) {
 			});
 
 			proc.on("error", (err) => {
-				clearInterval(state.timer);
 				state.status = "error";
 				state.lastWork = `Error: ${err.message}`;
+				stopGlobalIntervalIfNoRunning();
 				updateWidget();
 				resolve({
 					output: `Error spawning agent: ${err.message}`,
@@ -607,29 +607,6 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("agents-grid", {
-		description: "Set grid columns: /agents-grid <1-6>",
-		getArgumentCompletions: (prefix: string): AutocompleteItem[] | null => {
-			const items = ["1", "2", "3", "4", "5", "6"].map(n => ({
-				value: n,
-				label: `${n} columns`,
-			}));
-			const filtered = items.filter(i => i.value.startsWith(prefix));
-			return filtered.length > 0 ? filtered : items;
-		},
-		handler: async (args, _ctx) => {
-			widgetCtx = _ctx;
-			const n = parseInt(args?.trim() || "", 10);
-			if (n >= 1 && n <= 6) {
-				gridCols = n;
-				_ctx.ui.notify(`Grid set to ${gridCols} columns`, "info");
-				updateWidget();
-			} else {
-				_ctx.ui.notify("Usage: /agents-grid <1-6>", "error");
-			}
-		},
-	});
-
 	// ── System Prompt Override ───────────────────
 
 	pi.on("before_agent_start", async (_event, _ctx) => {
@@ -708,8 +685,7 @@ ${agentCatalog}`,
 			`Team: ${activeTeamName} (${members})\n` +
 			`Team sets loaded from: .pi/agents/teams.yaml\n\n` +
 			`/agents-team          Select a team\n` +
-			`/agents-list          List active agents and status\n` +
-			`/agents-grid <1-6>    Set grid column count`,
+			`/agents-list          List active agents and status`,
 			"info",
 		);
 		updateWidget();
