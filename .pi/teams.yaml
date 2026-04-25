@@ -1,0 +1,36 @@
+full:
+  - scout
+  - planner
+  - builder
+  - reviewer
+  - documenter
+  - red-team
+  - session-manager      # NEW: Session management
+
+plan-build:
+  - planner
+  - builder
+  - reviewer
+  - session-manager      # NEW: Session tracking
+
+info:
+  - scout
+  - documenter
+  - reviewer
+  - session-manager      # NEW: Session documentation
+
+frontend:
+  - planner
+  - builder
+  - bowser
+  - session-manager      # NEW: Frontend session management
+
+pi-pi:
+  - ext-expert
+  - theme-expert
+  - skill-expert
+  - config-expert
+  - tui-expert
+  - prompt-expert
+  - agent-expert
+  - session-expert       # NEW: Session expertise

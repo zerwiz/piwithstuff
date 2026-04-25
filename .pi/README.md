@@ -1,0 +1,1 @@
+A subagent plan to trigger UI status display on Ctrl+O press. Press Ctrl+O to show UI status. Refers to planning.md.
