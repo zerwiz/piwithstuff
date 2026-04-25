@@ -5,19 +5,146 @@
  * Subscribes to session events for real-time streaming updates.
  */
 
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
-import { type Component, matchesKey, type TUI, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
-import { extractText } from "../context.js";
-import type { AgentRecord } from "../types.js";
-import type { Theme } from "./agent-widget.js";
-import { type AgentActivity, describeActivity, formatDuration, formatTokens, getDisplayName, getPromptModeLabel } from "./agent-widget.js";
-
 /** Lines consumed by chrome: top border + header + header sep + footer sep + footer + bottom border. */
 const CHROME_LINES = 6;
 const MIN_VIEWPORT = 3;
 
+/** Interface for agent session messages. */
+interface AgentMessage {
+  role: "user" | "assistant" | "toolResult" | "bashExecution";
+  content: string | Array<{ type: string; text?: string }>;
+}
+
+/** Session statistics interface. */
+interface SessionStats {
+  tokens: {
+    total: number;
+  };
+}
+
+/** Session interface. */
+interface AgentSession {
+  subscribe(callback: () => void): () => void;
+  messages: AgentMessage[];
+  getSessionStats(): SessionStats;
+}
+
+/** Agent record interface. */
+interface AgentRecord {
+  type: string;
+  status:
+    | "queued"
+    | "running"
+    | "completed"
+    | "steered"
+    | "aborted"
+    | "stopped"
+    | "error"
+    | "background";
+  description: string;
+  toolUses: number;
+  startedAt: number;
+  completedAt?: number;
+  error?: string;
+  subagentType?: string;
+}
+
+/** Theme interface (re-exported from agent-widget). */
+export interface Theme {
+  fg(color: string, text: string): string;
+  bold(text: string): string;
+}
+
+/** Agent activity interface (re-exported from agent-widget). */
+export interface AgentActivity {
+  activeTools: Map<string, string>;
+  toolUses: number;
+  tokens: string;
+  responseText: string;
+  session?: { getSessionStats(): SessionStats };
+  turnCount: number;
+  maxTurns?: number;
+}
+
+/** Tool display mapping (re-exported from agent-widget). */
+const TOOL_DISPLAY: Record<string, string> = {
+  read: "reading",
+  bash: "running command",
+  edit: "editing",
+  write: "writing",
+  grep: "searching",
+  find: "finding files",
+  ls: "listing",
+};
+
+/** Get display name for any agent type. */
+function getDisplayName(type: string): string {
+  return type;
+}
+
+/** Get prompt mode label for agent type. */
+function getPromptModeLabel(_type: string): string | undefined {
+  return undefined;
+}
+
+/** Format a token count compactly. */
+function formatTokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M token`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k token`;
+  return `${count} token`;
+}
+
+/** Format duration from start/completed timestamps. */
+function formatDuration(startedAt: number, completedAt?: number): string {
+  if (completedAt) return `${((completedAt - startedAt) / 1000).toFixed(1)}s`;
+  return `${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
+}
+
+/** Extract text from message content. */
+function extractText(content: any): string {
+  if (typeof content === "string") return content;
+  return content.map((c: any) => c.text ?? "").join("\n") || "";
+}
+
+/** Describe current activity. */
+function describeActivity(
+  activeTools: Map<string, string>,
+  responseText?: string,
+): string {
+  if (activeTools.size > 0) {
+    const groups = new Map<string, number>();
+    for (const toolName of activeTools.values()) {
+      const action = TOOL_DISPLAY[toolName] ?? toolName;
+      groups.set(action, (groups.get(action) ?? 0) + 1);
+    }
+
+    const parts: string[] = [];
+    for (const [action, count] of groups) {
+      if (count > 1) {
+        parts.push(
+          `${action} ${count} ${action === "searching" ? "patterns" : "files"}`,
+        );
+      } else {
+        parts.push(action);
+      }
+    }
+    return parts.join(", ") + "…";
+  }
+
+  if (responseText && responseText.trim().length > 0) {
+    const lines = responseText
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l);
+    if (lines.length === 1) return lines[0];
+    if (lines.length <= 3) return lines.join("\n");
+    return lines.slice(0, 2).join("\n") + "\n…";
+  }
+
+  return "thinking…";
+}
+
 export class ConversationViewer implements Component {
-  private scrollOffset = 0;
   private autoScroll = true;
   private unsubscribe: (() => void) | undefined;
   private lastInnerW = 0;
@@ -58,7 +185,10 @@ export class ConversationViewer implements Component {
       this.scrollOffset = Math.max(0, this.scrollOffset - viewportHeight);
       this.autoScroll = false;
     } else if (matchesKey(data, "pageDown")) {
-      this.scrollOffset = Math.min(maxScroll, this.scrollOffset + viewportHeight);
+      this.scrollOffset = Math.min(
+        maxScroll,
+        this.scrollOffset + viewportHeight,
+      );
       this.autoScroll = this.scrollOffset >= maxScroll;
     } else if (matchesKey(data, "home")) {
       this.scrollOffset = 0;
@@ -81,7 +211,11 @@ export class ConversationViewer implements Component {
       return s + " ".repeat(Math.max(0, len - vis));
     };
     const row = (content: string) =>
-      th.fg("border", "│") + " " + truncateToWidth(pad(content, innerW), innerW) + " " + th.fg("border", "│");
+      th.fg("border", "│") +
+      " " +
+      truncateToWidth(pad(content, innerW), innerW) +
+      " " +
+      th.fg("border", "│");
     const hrTop = th.fg("border", `╭${"─".repeat(width - 2)}╮`);
     const hrBot = th.fg("border", `╰${"─".repeat(width - 2)}╯`);
     const hrMid = row(th.fg("dim", "─".repeat(innerW)));
@@ -91,28 +225,37 @@ export class ConversationViewer implements Component {
     const name = getDisplayName(this.record.type);
     const modeLabel = getPromptModeLabel(this.record.type);
     const modeTag = modeLabel ? ` ${th.fg("dim", `(${modeLabel})`)}` : "";
-    const statusIcon = this.record.status === "running"
-      ? th.fg("accent", "●")
-      : this.record.status === "completed"
-        ? th.fg("success", "✓")
-        : this.record.status === "error"
-          ? th.fg("error", "✗")
-          : th.fg("dim", "○");
-    const duration = formatDuration(this.record.startedAt, this.record.completedAt);
+    const statusIcon =
+      this.record.status === "running"
+        ? th.fg("accent", "●")
+        : this.record.status === "completed"
+          ? th.fg("success", "✓")
+          : this.record.status === "error"
+            ? th.fg("error", "✗")
+            : th.fg("dim", "○");
+    const duration = formatDuration(
+      this.record.startedAt,
+      this.record.completedAt,
+    );
 
     const headerParts: string[] = [duration];
     const toolUses = this.activity?.toolUses ?? this.record.toolUses;
-    if (toolUses > 0) headerParts.unshift(`${toolUses} tool${toolUses === 1 ? "" : "s"}`);
+    if (toolUses > 0)
+      headerParts.unshift(`${toolUses} tool${toolUses === 1 ? "" : "s"}`);
     if (this.activity?.session) {
       try {
         const tokens = this.activity.session.getSessionStats().tokens.total;
         if (tokens > 0) headerParts.push(formatTokens(tokens));
-      } catch { /* */ }
+      } catch {
+        /* */
+      }
     }
 
-    lines.push(row(
-      `${statusIcon} ${th.bold(name)}${modeTag}  ${th.fg("muted", this.record.description)} ${th.fg("dim", "·")} ${th.fg("dim", headerParts.join(" · "))}`,
-    ));
+    lines.push(
+      row(
+        `${statusIcon} ${th.bold(name)}${modeTag}  ${th.fg("muted", this.record.description)} ${th.fg("dim", "·")} ${th.fg("dim", headerParts.join(" · "))}`,
+      ),
+    );
     lines.push(hrMid);
 
     // Content area — rebuild every render (live data, no cache needed)
@@ -125,7 +268,10 @@ export class ConversationViewer implements Component {
     }
 
     const visibleStart = Math.min(this.scrollOffset, maxScroll);
-    const visible = contentLines.slice(visibleStart, visibleStart + viewportHeight);
+    const visible = contentLines.slice(
+      visibleStart,
+      visibleStart + viewportHeight,
+    );
 
     for (let i = 0; i < viewportHeight; i++) {
       lines.push(row(visible[i] ?? ""));
@@ -133,19 +279,28 @@ export class ConversationViewer implements Component {
 
     // Footer
     lines.push(hrMid);
-    const scrollPct = contentLines.length <= viewportHeight
-      ? "100%"
-      : `${Math.round(((visibleStart + viewportHeight) / contentLines.length) * 100)}%`;
-    const footerLeft = th.fg("dim", `${contentLines.length} lines · ${scrollPct}`);
+    const scrollPct =
+      contentLines.length <= viewportHeight
+        ? "100%"
+        : `${Math.round(((visibleStart + viewportHeight) / contentLines.length) * 100)}%`;
+    const footerLeft = th.fg(
+      "dim",
+      `${contentLines.length} lines · ${scrollPct}`,
+    );
     const footerRight = th.fg("dim", "↑↓ scroll · PgUp/PgDn · Esc close");
-    const footerGap = Math.max(1, innerW - visibleWidth(footerLeft) - visibleWidth(footerRight));
+    const footerGap = Math.max(
+      1,
+      innerW - visibleWidth(footerLeft) - visibleWidth(footerRight),
+    );
     lines.push(row(footerLeft + " ".repeat(footerGap) + footerRight));
     lines.push(hrBot);
 
     return lines;
   }
 
-  invalidate(): void { /* no cached state to clear */ }
+  invalidate(): void {
+    /* no cached state to clear */
+  }
 
   dispose(): void {
     this.closed = true;
@@ -176,9 +331,10 @@ export class ConversationViewer implements Component {
     let needsSeparator = false;
     for (const msg of messages) {
       if (msg.role === "user") {
-        const text = typeof msg.content === "string"
-          ? msg.content
-          : extractText(msg.content);
+        const text =
+          typeof msg.content === "string"
+            ? msg.content
+            : extractText(msg.content);
         if (!text.trim()) continue;
         if (needsSeparator) lines.push(th.fg("dim", "───"));
         lines.push(th.fg("accent", "[User]"));
@@ -197,16 +353,22 @@ export class ConversationViewer implements Component {
         if (needsSeparator) lines.push(th.fg("dim", "───"));
         lines.push(th.bold("[Assistant]"));
         if (textParts.length > 0) {
-          for (const line of wrapTextWithAnsi(textParts.join("\n").trim(), width)) {
+          for (const line of wrapTextWithAnsi(
+            textParts.join("\n").trim(),
+            width,
+          )) {
             lines.push(line);
           }
         }
         for (const name of toolCalls) {
-          lines.push(truncateToWidth(th.fg("muted", `  [Tool: ${name}]`), width));
+          lines.push(
+            truncateToWidth(th.fg("muted", `  [Tool: ${name}]`), width),
+          );
         }
       } else if (msg.role === "toolResult") {
         const text = extractText(msg.content);
-        const truncated = text.length > 500 ? text.slice(0, 500) + "... (truncated)" : text;
+        const truncated =
+          text.length > 500 ? text.slice(0, 500) + "... (truncated)" : text;
         if (!truncated.trim()) continue;
         if (needsSeparator) lines.push(th.fg("dim", "───"));
         lines.push(th.fg("dim", "[Result]"));
@@ -216,11 +378,14 @@ export class ConversationViewer implements Component {
       } else if ((msg as any).role === "bashExecution") {
         const bash = msg as any;
         if (needsSeparator) lines.push(th.fg("dim", "───"));
-        lines.push(truncateToWidth(th.fg("muted", `  $ ${bash.command}`), width));
+        lines.push(
+          truncateToWidth(th.fg("muted", `  $ ${bash.command}`), width),
+        );
         if (bash.output?.trim()) {
-          const out = bash.output.length > 500
-            ? bash.output.slice(0, 500) + "... (truncated)"
-            : bash.output;
+          const out =
+            bash.output.length > 500
+              ? bash.output.slice(0, 500) + "... (truncated)"
+              : bash.output;
           for (const line of wrapTextWithAnsi(out.trim(), width)) {
             lines.push(th.fg("dim", line));
           }
@@ -233,11 +398,16 @@ export class ConversationViewer implements Component {
 
     // Streaming indicator for running agents
     if (this.record.status === "running" && this.activity) {
-      const act = describeActivity(this.activity.activeTools, this.activity.responseText);
+      const act = describeActivity(
+        this.activity.activeTools,
+        this.activity.responseText,
+      );
       lines.push("");
-      lines.push(truncateToWidth(th.fg("accent", "▍ ") + th.fg("dim", act), width));
+      lines.push(
+        truncateToWidth(th.fg("accent", "▍ ") + th.fg("dim", act), width),
+      );
     }
 
-    return lines.map(l => truncateToWidth(l, width));
+    return lines.map((l) => truncateToWidth(l, width));
   }
 }
