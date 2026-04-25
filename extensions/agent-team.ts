@@ -46,6 +46,7 @@ interface AgentState {
 	sessionFile: string | null;
 	runCount: number;
 	activeTools: Set<string>;
+	lastThinking: string;
 }
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -54,6 +55,17 @@ const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", 
 
 function displayName(name: string): string {
 	return name.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+/** Wrap text into lines of max width */
+function wrapLine(text: string, width: number): string[] {
+	const lines: string[] = [];
+	let current = text;
+	while (current.length > 0) {
+		lines.push(current.slice(0, width));
+		current = current.slice(width);
+	}
+	return lines;
 }
 
 // ── Teams YAML Parser ────────────────────────────
@@ -197,6 +209,7 @@ export default function (pi: ExtensionAPI) {
 				sessionFile: existsSync(sessionFile) ? sessionFile : null,
 				runCount: 0,
 				activeTools: new Set(),
+				lastThinking: "",
 			});
 		}
 	}
@@ -293,17 +306,27 @@ export default function (pi: ExtensionAPI) {
 							if (state.activeTools.size > 0) {
 								const toolNames = Array.from(state.activeTools).join(", ");
 								lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("accent", `  ⎿  using: ${toolNames}...`), width));
+							} else if (state.lastThinking) {
+								const lastThinkChunk = state.lastThinking.split("\n").filter(l => l.trim()).pop() || "";
+								const wrappedThink = wrapLine(`thinking: ${lastThinkChunk}`, width - 15).slice(0, 3);
+								
+								for (let j = 0; j < wrappedThink.length; j++) {
+									const isLastLine = j === wrappedThink.length - 1;
+									const branch = isLastLine ? "⎿ " : "  ";
+									lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("dim", `  ${branch} `) + theme.fg("dim", theme.italic(wrappedThink[j])), width));
+								}
 							} else {
 								const workText = state.lastWork || "thinking...";
-								const workLines = workText.split("\n").filter(l => l.trim()).slice(-3);
+								const lastWorkChunk = workText.split("\n").filter(l => l.trim()).pop() || "";
+								const wrappedWork = wrapLine(lastWorkChunk, width - 15).slice(0, 3);
 
-								if (workLines.length === 0) {
+								if (wrappedWork.length === 0) {
 									lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("dim", "  ⎿  thinking..."), width));
 								} else {
-									for (let j = 0; j < workLines.length; j++) {
-										const isLastWorkLine = j === workLines.length - 1;
-										const workBranch = isLastWorkLine ? "⎿ " : "  ";
-										lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("dim", `  ${workBranch} ${truncateToWidth(workLines[j], width - 10)}`), width));
+									for (let j = 0; j < wrappedWork.length; j++) {
+										const isLastLine = j === wrappedWork.length - 1;
+										const branch = isLastLine ? "⎿ " : "  ";
+										lines.push(truncateToWidth(theme.fg("dim", activityBranch) + theme.fg("dim", `  ${branch} ${wrappedWork[j]}`), width));
 									}
 								}
 							}
@@ -352,6 +375,7 @@ export default function (pi: ExtensionAPI) {
 		state.lastWork = "";
 		state.runCount++;
 		state.activeTools.clear();
+		state.lastThinking = "";
 		ensureGlobalInterval();
 		updateWidget();
 
@@ -372,7 +396,7 @@ export default function (pi: ExtensionAPI) {
 			"--no-extensions",
 			"--model", model,
 			"--tools", state.def.tools,
-			"--thinking", "off",
+			"--thinking", "low",
 			"--append-system-prompt", state.def.systemPrompt,
 			"--session", agentSessionFile,
 		];
@@ -410,6 +434,16 @@ export default function (pi: ExtensionAPI) {
 								textChunks.push(delta.delta || "");
 								const full = textChunks.join("");
 								state.lastWork = full;
+								updateWidget();
+							} else if (delta?.type === "thinking_delta") {
+								state.lastThinking = (state.lastThinking || "") + (delta.delta || "");
+								updateWidget();
+							} else if (delta?.type === "thinking_start") {
+								state.lastThinking = "";
+								updateWidget();
+							} else if (delta?.type === "thinking_end") {
+								// We keep thinking visible for a bit or until next event?
+								// Let's keep it until it's finished.
 								updateWidget();
 							}
 						} else if (event.type === "tool_execution_start") {
