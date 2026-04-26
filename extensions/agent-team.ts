@@ -15,6 +15,8 @@
  *   /agents-grid N        — set column count (default 2)
  *
  * Usage: pi -e extensions/agent-team.ts
+ *
+ * @license MIT
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -36,9 +38,7 @@ import {
 import { join, resolve } from "path";
 import { applyExtensionDefaults } from "./themeMap.ts";
 
-import type { AgentDetails } from "./ui/agent-widget.ts";
-
-// ── Types ────────────────────────────────────────
+// ── Types ───────────────────────────────────────────────────────────────
 
 interface AgentDef {
   name: string;
@@ -48,9 +48,20 @@ interface AgentDef {
   file: string;
 }
 
-export type { AgentDetails } from "./ui/agent-widget.ts";
+interface AgentState {
+  def: AgentDef;
+  status: "idle" | "running" | "done" | "error";
+  task: string;
+  toolCount: number;
+  elapsed: number;
+  lastWork: string;
+  contextPct: number;
+  sessionFile: string | null;
+  runCount: number;
+  timer?: ReturnType<typeof setInterval>;
+}
 
-// ── Display Name Helper ──────────────────────────
+// ── Helper Functions ────────────────────────────────────────────────────
 
 function displayName(name: string): string {
   return name
@@ -58,8 +69,6 @@ function displayName(name: string): string {
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
 }
-
-// ── Teams YAML Parser ────────────────────────────
 
 function parseTeamsYaml(raw: string): Record<string, string[]> {
   const teams: Record<string, string[]> = {};
@@ -78,8 +87,6 @@ function parseTeamsYaml(raw: string): Record<string, string[]> {
   }
   return teams;
 }
-
-// ── Frontmatter Parser ───────────────────────────
 
 function parseAgentFile(filePath: string): AgentDef | null {
   try {
@@ -137,7 +144,7 @@ function scanAgentDirs(cwd: string): AgentDef[] {
   return agents;
 }
 
-// ── Extension ────────────────────────────────────
+// ── Extension ───────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
   const agentStates: Map<string, AgentState> = new Map();
@@ -190,25 +197,17 @@ export default function (pi: ExtensionAPI) {
       if (!def) continue;
       const key = def.name.toLowerCase().replace(/\s+/g, "-");
       const sessionFile = join(sessionDir, `${key}.json`);
-      const agentDetails: AgentDetails = {
-        id: key,
-        type: "custom",
+      agentStates.set(def.name.toLowerCase(), {
+        def,
         status: "idle",
-        description: def.description,
-        tools: def.tools,
-        systemPrompt: def.systemPrompt,
-        file: def.file,
-        toolUses: 0,
-        tokens: "",
-        startedAt: 0,
-        completedAt: 0,
-        error: undefined,
-        turnCount: 0,
-        maxTurns: undefined,
+        task: "",
+        toolCount: 0,
+        elapsed: 0,
+        lastWork: "",
+        contextPct: 0,
         sessionFile: existsSync(sessionFile) ? sessionFile : null,
         runCount: 0,
-      };
-      agentStates.set(key, agentDetails);
+      });
     }
 
     // Auto-size grid columns based on team size
@@ -216,7 +215,7 @@ export default function (pi: ExtensionAPI) {
     gridCols = size <= 3 ? size : size === 4 ? 2 : 3;
   }
 
-  // ── Grid Rendering ───────────────────────────
+  // ── Grid Rendering ────────────────────────────────────────────────────
 
   function renderCard(
     state: AgentDetails,
@@ -334,7 +333,7 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
-  // ── Dispatch Agent (returns Promise) ─────────
+  // ── Dispatch Agent (returns Promise) ──────────────────────────────────
 
   function dispatchAgent(
     agentName: string,
@@ -525,7 +524,7 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
-  // ── dispatch_agent Tool (registered at top level) ──
+  // ── dispatch_agent Tool (registered at top level) ────────────────────
 
   pi.registerTool({
     name: "dispatch_agent",
@@ -533,7 +532,9 @@ export default function (pi: ExtensionAPI) {
     description:
       "Dispatch a task to a specialist agent. The agent will execute the task and return the result. Use the system prompt to see available agent names.",
     parameters: Type.Object({
-      agent: Type.String({ description: "Agent name (case-insensitive)" }),
+      agent: Type.String({
+        description: "Agent name (case-insensitive)",
+      }),
       task: Type.String({
         description: "Task description for the agent to execute",
       }),
@@ -644,7 +645,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // ── Commands ─────────────────────────────────
+  // ── Commands ──────────────────────────────────────────────────────────
 
   pi.registerCommand("agents-team", {
     description: "Select a team to work with",
@@ -715,7 +716,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // ── System Prompt Override ───────────────────
+  // ── System Prompt Override ────────────────────────────────────────────
 
   pi.on("before_agent_start", async (_event, _ctx) => {
     // Build dynamic agent catalog from active team only
@@ -760,7 +761,7 @@ ${agentCatalog}`,
     };
   });
 
-  // ── Session Start ────────────────────────────
+  // ── Session Start ─────────────────────────────────────────────────────
 
   pi.on("session_start", async (_event, _ctx) => {
     applyExtensionDefaults(import.meta.url, _ctx);
