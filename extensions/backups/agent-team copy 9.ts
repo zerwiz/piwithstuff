@@ -28,7 +28,7 @@ import {
   unlinkSync,
 } from "fs";
 import { join, resolve } from "path";
-import { applyExtensionDefaults } from "./themeMap.ts";
+import { applyExtensionDefaults } from "../themeMap.js";
 
 // ── Types ────────────────────────────────────────
 

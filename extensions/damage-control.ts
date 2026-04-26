@@ -16,6 +16,7 @@ interface PathOverride {
 	path: string;
 	allowDeletions?: boolean; // default true
 	allowWrites?: boolean;    // default true — controls `write` tool (create/overwrite)
+	allowWriteIn?: string;    // optional subdirectory (relative to matched path) where writes are additionally required to reside
 	allowEdits?: boolean;     // default true — controls `edit` and `replace` tools (modify existing)
 	allowReads?: boolean;     // default true
 }
@@ -103,6 +104,13 @@ export default function (pi: ExtensionAPI) {
 			if (toolName === "write") {
 				if (override.allowWrites === false) {
 					return { blocked: true, reason: `Path override: Write/create blocked for path matching ${override.path}` };
+				}
+				// Additional write location restriction: allowWriteIn
+				if (override.allowWrites !== false && override.allowWriteIn) {
+					// allowWriteIn can be absolute or relative to cwd; use isPathMatch directly
+					if (!isPathMatch(resolvedTarget, override.allowWriteIn, cwd)) {
+						return { blocked: true, reason: `Path override: Write not permitted at this location; only allowed in paths matching ${override.allowWriteIn}` };
+					}
 				}
 			}
 

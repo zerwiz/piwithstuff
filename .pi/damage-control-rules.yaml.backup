@@ -1,3 +1,17 @@
+  # Current project: lock deletion for this entire workspace while allowing reads, writes, and edits
+  - path: "/home/zerwiz/woh"
+    allowDeletions: false
+    allowWrites: true
+    allowEdits: true
+    allowReads: true
+
+   # Current project: lock deletion for this entire workspace while allowing reads, writes, and edits
+   - path: "/home/zerwiz/woh"
+     allowDeletions: false
+     allowWrites: true
+     allowEdits: true
+     allowReads: true 
+
 bashToolPatterns:
   - pattern: '\brm\s+(-[^\s]*)*-[rRf]'
     reason: rm with recursive or force flags
@@ -284,6 +298,13 @@ noDeletePaths:
   - docker-compose.yml
   - "docker-compose.*.yml"
   - .dockerignore
+  - /home/zerwiz/CodeP/CodepOS
+  - /home/zerwiz/
+  - /home/zerwiz/CodeP
+  - /home
+  - /home/zerwiz/CodeP/piwithstuff
+  - /home/zerwiz/CodeP/piwithstuff/.pi
+  - /home/zerwiz/.pi
 
 # Path-based override rules (HIGHEST PRIORITY)
 # These rules take precedence over ALL other damage-control checks.
@@ -291,43 +312,6 @@ noDeletePaths:
 # If an override matches a path, its allow* flags determine what's permitted,
 # regardless of bashToolPatterns, zeroAccessPaths, readOnlyPaths, etc.
 pathOverrides:
-
-
-  # Active: Lock deletion for this entire workspace while allowing reads, writes, and edits
-  - path: "~/woh"
-    allowDeletions: false
-    allowWrites: true
-    allowEdits: true
-    allowReads: true
-
-  # Lock down every file path in home directory EXCEPT the project workspace
-  - path: "~/home/.pi"
-    allowDeletions: false
-    allowWrites: false
-    allowEdits: false
-    allowReads: true
-
-  # Exclude: Project damage-control files - allow full access
-  - path: "~/piwithstuff/.pi/damage-control-rules.yaml"
-    allowDeletions: false
-    allowWrites: false
-    allowEdits: false
-    allowReads: false
-
-  # Exclude: Project damage-control extension - allow full access
-  - path: "~/piwithstuff/extensions/damage-control.ts"
-    allowDeletions: false
-    allowWrites: false
-    allowEdits: false
-    allowReads: true
-
-  # Exclude: Entire project workspace - allow full access (overrides parent lock)
-  - path: "/home/zerwiz/piwithstuff"
-    allowDeletions: false
-    allowWrites: false
-    allowEdits: false
-    allowReads: true
-  
   # Example: Protect a critical production directory - deny all deletions
   # - path: "/home/production-data"
   #   allowDeletions: false
@@ -362,3 +346,10 @@ pathOverrides:
   #   allowWriteIn: "docs"  # writes only permitted under /home/zerwiz/project/docs/
   #   allowEdits: true
   #   allowReads: true
+
+  # Active: Lock deletion for this entire workspace while allowing reads, writes, and edits
+  - path: "/home/zerwiz/woh"
+    allowDeletions: false
+    allowWrites: true
+    allowEdits: true
+    allowReads: true
