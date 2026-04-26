@@ -1,0 +1,32 @@
+================================================================================
+AGENTS TEAM - MIGRATION AND FIXES DOCUMENTATION
+================================================================================
+
+PART 1: Manager Migration Code (src/ui/manager.ts)
+---------------------------------------------------
+Created with all requested features:
+1. ✓ Error callback with 10s extended timeout
+2. ✓ Debouncing for stop keys (ctrl+q)
+3. ✓ Clear all statuses after agent stop
+4. ✓ runningAgentCount() getter method
+5. ✓ Persistent counters only use setStatus()
+
+PART 2: Agent Team Code (agent-team.ts)
+-----------------------------------------
+Created with:
+- AgentSwitchState interface
+- SwitchMode enum (IDLE, PENDING, CONFIRMING, ACTIVE)
+- AgentTeamManager class with validation
+- Edge case handlers
+- Tool permission validation
+- Session preservation
+
+PART 3: Bug Fixes for agent-widget.ts
+--------------------------------------
+Fixed connector rendering issues:
+- Inconsistent connector logic in overflow
+- Missing connector for overflow summary
+- Running agent pairs treated as blocks
+- Proper connector handling for all scenarios
+
+================================================================================

@@ -1,9 +1,17 @@
 {
-  "name": "pi-vs-cc",
-  "private": true,
-  "type": "module",
-  "description": "Pi Coding Agent extension playground",
-  "dependencies": {
-    "yaml": "^2.8.0"
+  "name": "pi-with-stuff",
+  "version": "0.1.0",
+  "description": "Small local models work best for local programming. Update from IndyDevDans Pi vs Claude Code project. Built on www.pi.dev by Mario Zechner. Made by zerwiz (whynotproductions.netlify.app, github.com/zerwiz/piwithstuff)",
+  "keywords": [
+    "local ai",
+    "pi",
+    "small models",
+    "local programming"
+  ],
+  "author": "zerwiz",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zerwiz/piwithstuff.git"
   }
 }

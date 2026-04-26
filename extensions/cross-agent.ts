@@ -170,7 +170,7 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	// Also scan .pi/agents/ (pi-vs-cc pattern)
+	// Also scan .pi/agents/ (Pi vs Claude Code pattern)
 	const localAgents = scanAgents(join(cwd, ".pi", "agents"));
 	if (localAgents.length) {
 		groups.push({ source: ".pi/agents", commands: [], skills: [], agents: localAgents });

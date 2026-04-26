@@ -16,7 +16,7 @@ Extensions in this repo use a consistent color language mapped to Pi's theme tok
 
 ```
 Context meter:  warning([) success(###) dim(---) warning(]) accent(30%)
-Git branch:     dim(pi-vs-cc) warning(() success(main) warning())
+Git branch:     dim(Pi vs Claude Code) warning(() success(main) warning())
 Token stats:    success(1.2k) dim(in) accent(340) dim(out) warning($0.0042)
 Tool tally:     accent(Bash) success(3) warning(|) accent(Read) success(7)
 ```

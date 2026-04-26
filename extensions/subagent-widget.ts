@@ -21,6 +21,14 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { applyExtensionDefaults } from "./themeMap.ts";
+import { buildMemoryBlock } from "./memory.ts";
+
+interface AgentDef {
+	name: string;
+	description: string;
+	tools: string;
+	systemPrompt: string;
+}
 
 interface SubState {
 	id: number;
@@ -38,6 +46,60 @@ export default function (pi: ExtensionAPI) {
 	const agents: Map<number, SubState> = new Map();
 	let nextId = 1;
 	let widgetCtx: any;
+	let allAgentDefs: Map<string, AgentDef> = new Map();
+
+	function parseAgentFile(filePath: string): AgentDef | null {
+		try {
+			const raw = fs.readFileSync(filePath, "utf-8");
+			const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+			if (!match) return null;
+
+			const frontmatter: Record<string, string> = {};
+			for (const line of match[1].split("\n")) {
+				const idx = line.indexOf(":");
+				if (idx > 0) {
+					frontmatter[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+				}
+			}
+
+			if (!frontmatter.name) return null;
+
+			return {
+				name: frontmatter.name,
+				description: frontmatter.description || "",
+				tools: frontmatter.tools || "read,grep,find,ls",
+				systemPrompt: match[2].trim(),
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	function scanAgentDirs(cwd: string): Map<string, AgentDef> {
+		const dirs = [
+			path.join(cwd, "agents"),
+			path.join(cwd, ".claude", "agents"),
+			path.join(cwd, ".pi", "agents"),
+		];
+
+		const agents = new Map<string, AgentDef>();
+
+		for (const dir of dirs) {
+			if (!fs.existsSync(dir)) continue;
+			try {
+				for (const file of fs.readdirSync(dir)) {
+					if (!file.endsWith(".md")) continue;
+					const fullPath = path.resolve(dir, file);
+					const def = parseAgentFile(fullPath);
+					if (def && !agents.has(def.name.toLowerCase())) {
+						agents.set(def.name.toLowerCase(), def);
+					}
+				}
+			} catch {}
+		}
+
+		return agents;
+	}
 
 	// ── Session file helpers ──────────────────────────────────────────────────
 
@@ -138,16 +200,38 @@ export default function (pi: ExtensionAPI) {
 			? `${ctx.model.provider}/${ctx.model.id}`
 			: "openrouter/google/gemini-3-flash-preview";
 
+		let agentName = `subagent-${state.id}`;
+		let tools = "read,bash,grep,find,ls";
+		let systemPrompt = "";
+		let task = prompt;
+
+		// Check for "agent: task" pattern
+		const colonIdx = prompt.indexOf(":");
+		if (colonIdx > 0) {
+			const possibleName = prompt.slice(0, colonIdx).trim().toLowerCase();
+			const def = allAgentDefs.get(possibleName);
+			if (def) {
+				agentName = def.name;
+				tools = def.tools;
+				systemPrompt = def.systemPrompt;
+				task = prompt.slice(colonIdx + 1).trim();
+			}
+		}
+
+		const memoryBlock = buildMemoryBlock(agentName, "project", ctx.cwd);
+		const combinedPrompt = systemPrompt ? systemPrompt + "\n\n" + memoryBlock : memoryBlock;
+
 		return new Promise<void>((resolve) => {
 			const proc = spawn("pi", [
 				"--mode", "json",
 				"-p",
 				"--session", state.sessionFile,   // persistent session for /subcont resumption
-				"--no-extensions",
+				"-e", "extensions/damage-control.ts",
 				"--model", model,
-				"--tools", "read,bash,grep,find,ls",
+				"--tools", tools,
 				"--thinking", "off",
-				prompt,
+				"--append-system-prompt", combinedPrompt,
+				task,
 			], {
 				stdio: ["ignore", "pipe", "pipe"],
 				env: { ...process.env },
@@ -323,6 +407,20 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerTool({
+		name: "subagent_manage",
+		description: "See all available agent types that you can spawn with /sub or subagent_create. Use this to see what specialists are available in the system.",
+		parameters: Type.Object({}),
+		execute: async () => {
+			const list = Array.from(allAgentDefs.values())
+				.map(d => `- **${d.name}**: ${d.description}`)
+				.join("\n");
+			return {
+				content: [{ type: "text", text: `Available Specialists:\n${list || "None found."}` }],
+			};
+		},
+	});
+
 
 
 	// ── /sub <task> ───────────────────────────────────────────────────────────
@@ -466,6 +564,27 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Session lifecycle ─────────────────────────────────────────────────────
 
+	pi.on("before_agent_start", async (_event, _ctx) => {
+		const available = Array.from(allAgentDefs.values())
+			.map(d => `- **${d.name}**: ${d.description}`)
+			.join("\n");
+
+		return {
+			systemPrompt: `You have the ability to spawn background subagents.
+Use \`subagent_create\` to start a new task.
+To use a specific specialist, use the format "agent_name: task" in the task description.
+
+## Available Specialists
+${available || "No specific specialists found."}
+
+## How to use
+- If you need a planner, use: \`subagent_create({ task: "planner: plan the refactor" })\`
+- If you need a builder, use: \`subagent_create({ task: "builder: implement the tests" })\`
+- You can see the full list of subagents with \`subagent_list\`.
+- You can see available agent types with \`subagent_manage\`.`
+		};
+	});
+
 	pi.on("session_start", async (_event, ctx) => {
 		applyExtensionDefaults(import.meta.url, ctx);
 		for (const [id, state] of Array.from(agents.entries())) {
@@ -477,5 +596,6 @@ export default function (pi: ExtensionAPI) {
 		agents.clear();
 		nextId = 1;
 		widgetCtx = ctx;
+		allAgentDefs = scanAgentDirs(ctx.cwd);
 	});
 }

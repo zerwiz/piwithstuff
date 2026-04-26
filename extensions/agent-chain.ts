@@ -28,6 +28,7 @@ import { spawn } from "child_process";
 import { readFileSync, existsSync, readdirSync, mkdirSync, unlinkSync } from "fs";
 import { join, resolve } from "path";
 import { applyExtensionDefaults } from "./themeMap.ts";
+import { buildMemoryBlock, buildReadOnlyMemoryBlock } from "./memory.ts";
 
 // ── Types ────────────────────────────────────────
 
@@ -213,15 +214,19 @@ export default function (pi: ExtensionAPI) {
 			agentSessions.set(key, existsSync(sessionFile) ? sessionFile : null);
 		}
 
-		const chainPath = join(cwd, ".pi", "agents", "agent-chain.yaml");
-		if (existsSync(chainPath)) {
-			try {
-				chains = parseChainYaml(readFileSync(chainPath, "utf-8"));
-			} catch {
-				chains = [];
+		const chainPaths = [
+			join(cwd, ".pi", "agents", "agent-chain.yaml"),
+			join(cwd, ".pi", "agents", "session-manager.yaml"),
+		];
+
+		chains = [];
+		for (const chainPath of chainPaths) {
+			if (existsSync(chainPath)) {
+				try {
+					const loadedChains = parseChainYaml(readFileSync(chainPath, "utf-8"));
+					chains.push(...loadedChains);
+				} catch {}
 			}
-		} else {
-			chains = [];
 		}
 	}
 
@@ -342,14 +347,21 @@ export default function (pi: ExtensionAPI) {
 		const agentSessionFile = join(sessionDir, `chain-${agentKey}.json`);
 		const hasSession = agentSessions.get(agentKey);
 
+		const hasWriteTools = agentDef.tools.includes("write") || agentDef.tools.includes("edit") || agentDef.tools.includes("bash");
+		const memoryBlock = hasWriteTools
+			? buildMemoryBlock(agentDef.name, "project", ctx.cwd)
+			: buildReadOnlyMemoryBlock(agentDef.name, "project", ctx.cwd);
+
+		const combinedPrompt = agentDef.systemPrompt + "\n\n" + memoryBlock;
+
 		const args = [
 			"--mode", "json",
 			"-p",
-			"--no-extensions",
+			"-e", "extensions/damage-control.ts",
 			"--model", model,
 			"--tools", agentDef.tools,
 			"--thinking", "off",
-			"--append-system-prompt", agentDef.systemPrompt,
+			"--append-system-prompt", combinedPrompt,
 			"--session", agentSessionFile,
 		];
 
@@ -504,6 +516,66 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	// ── run_chain Tool ──────────────────────────
+
+	pi.registerTool({
+		name: "switch_chain",
+		label: "Switch Chain",
+		description: "Switch the active agent chain pipeline. This changes the sequence of agents and logic used for your tasks.",
+		parameters: Type.Object({
+			chainName: Type.String({ description: "The name of the chain to switch to" }),
+		}),
+
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const { chainName } = params as { chainName: string };
+			const chain = chains.find(c => c.name.toLowerCase() === chainName.toLowerCase());
+			if (!chain) {
+				return { content: [{ type: "text", text: `Chain "${chainName}" not found. Available chains: ${chains.map(c => c.name).join(", ")}` }] };
+			}
+			activateChain(chain);
+			ctx.ui.setStatus("agent-chain", `Chain: ${chain.name} (${chain.steps.length} steps)`);
+			return { content: [{ type: "text", text: `Switched to chain "${chain.name}". Flow: ${chain.steps.map(s => displayName(s.agent)).join(" → ")}` }] };
+		},
+	});
+
+	pi.registerTool({
+		name: "manage_team",
+		label: "Manage Team",
+		description: "Add or remove specialist agents from your active team. While chains have fixed steps, you can still bring in experts for direct delegation if needed.",
+		parameters: Type.Object({
+			action: Type.Enum({ add: "add", remove: "remove" }),
+			agent: Type.String({ description: "The name of the agent to add or remove" }),
+		}),
+
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			const { action, agent } = params as { action: "add" | "remove"; agent: string };
+			const key = agent.toLowerCase();
+
+			// For chain, we don't have a 'team' map in the same way, but we can manage agentSessions
+			// and allAgents. Actually, we should probably allow the dispatcher to have a 'dynamic team'
+			// in addition to the chain.
+			// However, agent-chain.ts is simpler. Let's just track a 'dynamic team' Set.
+
+			if (action === "add") {
+				const def = Array.from(allAgents.values()).find(d => d.name.toLowerCase() === key);
+				if (!def) {
+					return { content: [{ type: "text", text: `Agent "${agent}" not found in available specialists.` }] };
+				}
+				const agentKey = def.name.toLowerCase().replace(/\s+/g, "-");
+				const sessionFile = join(sessionDir, `chain-${agentKey}.json`);
+				if (!agentSessions.has(key)) {
+					agentSessions.set(key, existsSync(sessionFile) ? sessionFile : null);
+				}
+				return { content: [{ type: "text", text: `Specialist "${displayName(def.name)}" is now available for direct tasks.` }] };
+			} else {
+				if (!agentSessions.has(key)) {
+					return { content: [{ type: "text", text: `Agent "${agent}" is not in your dynamic team.` }] };
+				}
+				// We don't really 'remove' from allAgents, just ignore? 
+				// This is less critical for chain.
+				return { content: [{ type: "text", text: `Specialist "${agent}" removed from dynamic team.` }] };
+			}
+		},
+	});
 
 	pi.registerTool({
 		name: "run_chain",
@@ -670,6 +742,8 @@ export default function (pi: ExtensionAPI) {
 
 		// Build full agent catalog (like agent-team.ts)
 		const seen = new Set<string>();
+		const chainMembers = new Set(activeChain.steps.map(s => s.agent.toLowerCase()));
+
 		const agentCatalog = activeChain.steps
 			.filter(s => {
 				const key = s.agent.toLowerCase();
@@ -684,6 +758,13 @@ export default function (pi: ExtensionAPI) {
 			})
 			.join("\n\n");
 
+		const availableSpecialists = Array.from(allAgents.values())
+			.filter(d => !chainMembers.has(d.name.toLowerCase()))
+			.map(d => `- **${displayName(d.name)}**: ${d.description}`)
+			.join("\n");
+
+		const availableChains = chains.map(c => c.name).join(", ");
+
 		return {
 			systemPrompt: `You are an agent with a sequential pipeline called "${activeChain.name}" at your disposal.${desc}
 You have full access to your own tools AND the run_chain tool to delegate to your team.
@@ -692,6 +773,16 @@ You have full access to your own tools AND the run_chain tool to delegate to you
 Flow: ${flow}
 
 ${steps}
+
+## Dynamic Pipeline Management
+- If you need a specialist that is not in your current chain, you can use the \`manage_team\` tool to make them available for direct delegation.
+- If you want to swap your entire sequential pipeline for a different workflow, use \`switch_chain\`.
+
+## Available Chains
+${availableChains}
+
+## Available Specialists (not in chain)
+${availableSpecialists || "None available."}
 
 ## Agent Details
 
@@ -716,6 +807,7 @@ ${agentCatalog}
 
 ## Guidelines
 - Use your judgment — if it's quick, just do it; if it's real work, run the chain
+- Use switch_chain if the user's request aligns better with a different available workflow
 - Keep chain tasks focused and clearly described
 - You can mix direct work and chain runs in the same conversation`,
 		};

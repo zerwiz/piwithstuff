@@ -45,7 +45,7 @@ ext-tilldone:
 
 # 10. Agent team: dispatcher orchestrator with team select and grid dashboard
 ext-agent-team:
-    pi -e extensions/agent-team.ts -e extensions/theme-cycler.ts
+    pi -e extensions/agent-team.ts -e extensions/theme-cycler.ts -e extensions/damage-control.ts
 
 # 11. System select: /system to pick an agent persona as system prompt
 ext-system-select:
@@ -81,10 +81,10 @@ ext-theme-cycler:
 open +exts:
     #!/usr/bin/env bash
     args=""
-    for ext in {{exts}}; do
+    for ext in {{ exts }}; do
         args="$args -e extensions/$ext.ts"
     done
-    cmd="cd '{{justfile_directory()}}' && pi$args"
+    cmd="cd '{{ justfile_directory() }}' && pi$args"
     escaped="${cmd//\\/\\\\}"
     escaped="${escaped//\"/\\\"}"
     osascript -e "tell application \"Terminal\" to do script \"$escaped\""
@@ -92,7 +92,7 @@ open +exts:
 # Open every extension in its own terminal window
 all:
     just open pi
-    just open pure-focus 
+    just open pure-focus
     just open minimal theme-cycler
     just open cross-agent minimal
     just open purpose-gate minimal

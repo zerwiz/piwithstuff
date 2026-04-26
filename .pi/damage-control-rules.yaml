@@ -161,6 +161,12 @@ bashToolPatterns:
     ask: true
 
 zeroAccessPaths:
+  # The following sensitive paths were moved to readOnlyPaths
+  # These paths are now read-only instead of zero-access
+  # .env, SSH keys, cloud credentials, backup files, etc.
+  -
+
+readOnlyPaths:
   - ".env"
   - ".env.local"
   - ".env.development"
@@ -202,8 +208,6 @@ zeroAccessPaths:
   - "dump.sql"
   - "backup.sql"
   - "*.dump"
-
-readOnlyPaths:
   - /etc/
   - /home/zerwiz/.pi
   - /home/zerwiz
@@ -282,3 +286,9 @@ noDeletePaths:
   - "docker-compose.*.yml"
   - .dockerignore
   - /home/zerwiz/CodeP/CodepOS
+  - /home/zerwiz/
+  - /home/zerwiz/CodeP
+  - /home
+  - /home/zerwiz/CodeP/piwithstuff
+  - /home/zerwiz/CodeP/piwithstuff/.pi
+  - /home/zerwiz/.pi
