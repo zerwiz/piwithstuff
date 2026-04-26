@@ -23,6 +23,13 @@ import * as path from "path";
 import { applyExtensionDefaults } from "./themeMap.ts";
 import { buildMemoryBlock } from "./memory.ts";
 
+interface AgentDef {
+	name: string;
+	description: string;
+	tools: string;
+	systemPrompt: string;
+}
+
 interface SubState {
 	id: number;
 	status: "running" | "done" | "error";
@@ -39,6 +46,60 @@ export default function (pi: ExtensionAPI) {
 	const agents: Map<number, SubState> = new Map();
 	let nextId = 1;
 	let widgetCtx: any;
+	let allAgentDefs: Map<string, AgentDef> = new Map();
+
+	function parseAgentFile(filePath: string): AgentDef | null {
+		try {
+			const raw = fs.readFileSync(filePath, "utf-8");
+			const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+			if (!match) return null;
+
+			const frontmatter: Record<string, string> = {};
+			for (const line of match[1].split("\n")) {
+				const idx = line.indexOf(":");
+				if (idx > 0) {
+					frontmatter[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+				}
+			}
+
+			if (!frontmatter.name) return null;
+
+			return {
+				name: frontmatter.name,
+				description: frontmatter.description || "",
+				tools: frontmatter.tools || "read,grep,find,ls",
+				systemPrompt: match[2].trim(),
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	function scanAgentDirs(cwd: string): Map<string, AgentDef> {
+		const dirs = [
+			path.join(cwd, "agents"),
+			path.join(cwd, ".claude", "agents"),
+			path.join(cwd, ".pi", "agents"),
+		];
+
+		const agents = new Map<string, AgentDef>();
+
+		for (const dir of dirs) {
+			if (!fs.existsSync(dir)) continue;
+			try {
+				for (const file of fs.readdirSync(dir)) {
+					if (!file.endsWith(".md")) continue;
+					const fullPath = path.resolve(dir, file);
+					const def = parseAgentFile(fullPath);
+					if (def && !agents.has(def.name.toLowerCase())) {
+						agents.set(def.name.toLowerCase(), def);
+					}
+				}
+			} catch {}
+		}
+
+		return agents;
+	}
 
 	// ── Session file helpers ──────────────────────────────────────────────────
 
@@ -139,8 +200,26 @@ export default function (pi: ExtensionAPI) {
 			? `${ctx.model.provider}/${ctx.model.id}`
 			: "openrouter/google/gemini-3-flash-preview";
 
-		const memoryBlock = buildMemoryBlock(`subagent-${state.id}`, "project", ctx.cwd);
-		const tools = "read,bash,grep,find,ls";
+		let agentName = `subagent-${state.id}`;
+		let tools = "read,bash,grep,find,ls";
+		let systemPrompt = "";
+		let task = prompt;
+
+		// Check for "agent: task" pattern
+		const colonIdx = prompt.indexOf(":");
+		if (colonIdx > 0) {
+			const possibleName = prompt.slice(0, colonIdx).trim().toLowerCase();
+			const def = allAgentDefs.get(possibleName);
+			if (def) {
+				agentName = def.name;
+				tools = def.tools;
+				systemPrompt = def.systemPrompt;
+				task = prompt.slice(colonIdx + 1).trim();
+			}
+		}
+
+		const memoryBlock = buildMemoryBlock(agentName, "project", ctx.cwd);
+		const combinedPrompt = systemPrompt ? systemPrompt + "\n\n" + memoryBlock : memoryBlock;
 
 		return new Promise<void>((resolve) => {
 			const proc = spawn("pi", [
@@ -151,8 +230,8 @@ export default function (pi: ExtensionAPI) {
 				"--model", model,
 				"--tools", tools,
 				"--thinking", "off",
-				"--append-system-prompt", memoryBlock,
-				prompt,
+				"--append-system-prompt", combinedPrompt,
+				task,
 			], {
 				stdio: ["ignore", "pipe", "pipe"],
 				env: { ...process.env },
@@ -482,5 +561,6 @@ export default function (pi: ExtensionAPI) {
 		agents.clear();
 		nextId = 1;
 		widgetCtx = ctx;
+		allAgentDefs = scanAgentDirs(ctx.cwd);
 	});
 }

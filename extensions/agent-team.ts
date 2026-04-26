@@ -260,15 +260,29 @@ export default function (pi: ExtensionAPI) {
 
 		allAgentDefs = scanAgentDirs(cwd);
 
-		const teamsPath = join(cwd, ".pi", "agents", "teams.yaml");
-		if (existsSync(teamsPath)) {
-			try {
-				teams = parseTeamsYaml(readFileSync(teamsPath, "utf-8"));
-			} catch {
-				teams = {};
+		const teamsPaths = [
+			join(cwd, ".pi", "teams.yaml"),
+			join(cwd, ".pi", "agents", "teams.yaml"),
+		];
+
+		teams = {};
+		for (const teamsPath of teamsPaths) {
+			if (existsSync(teamsPath)) {
+				try {
+					const loadedTeams = parseTeamsYaml(readFileSync(teamsPath, "utf-8"));
+					for (const [teamName, members] of Object.entries(loadedTeams)) {
+						if (!teams[teamName]) {
+							teams[teamName] = [];
+						}
+						// Merge members, avoid duplicates
+						for (const member of members) {
+							if (!teams[teamName].includes(member)) {
+								teams[teamName].push(member);
+							}
+						}
+					}
+				} catch {}
 			}
-		} else {
-			teams = {};
 		}
 
 		if (Object.keys(teams).length === 0) {
@@ -287,7 +301,6 @@ export default function (pi: ExtensionAPI) {
 			if (!def) continue;
 			const key = def.name.toLowerCase().replace(/\s+/g, "-");
 			const sessionFile = join(sessionDir, `${key}.json`);
-			agentStates.get(def.name.toLowerCase());
 			agentStates.set(def.name.toLowerCase(), {
 				def,
 				status: "idle",

@@ -214,15 +214,19 @@ export default function (pi: ExtensionAPI) {
 			agentSessions.set(key, existsSync(sessionFile) ? sessionFile : null);
 		}
 
-		const chainPath = join(cwd, ".pi", "agents", "agent-chain.yaml");
-		if (existsSync(chainPath)) {
-			try {
-				chains = parseChainYaml(readFileSync(chainPath, "utf-8"));
-			} catch {
-				chains = [];
+		const chainPaths = [
+			join(cwd, ".pi", "agents", "agent-chain.yaml"),
+			join(cwd, ".pi", "agents", "session-manager.yaml"),
+		];
+
+		chains = [];
+		for (const chainPath of chainPaths) {
+			if (existsSync(chainPath)) {
+				try {
+					const loadedChains = parseChainYaml(readFileSync(chainPath, "utf-8"));
+					chains.push(...loadedChains);
+				} catch {}
 			}
-		} else {
-			chains = [];
 		}
 	}
 
