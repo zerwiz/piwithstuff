@@ -653,7 +653,7 @@ function updateWidget() {
       : buildReadOnlyMemoryBlock(state.def.name, "project", ctx.cwd);
 
     const args = [
-      "--mode", "json", "-p", "-e", "extensions/damage-control.ts",
+      "--mode", "json", "-p",
       "--model", model,
       "--tools", state.def.tools,
       "--thinking", "low",
@@ -867,6 +867,48 @@ function updateWidget() {
       new Text(theme.fg("toolTitle", theme.bold("list_team_agents")) + theme.fg("dim", " (show active team)"), 0, 0),
   });
 
+  pi.registerTool({
+    name: "save_memory",
+    label: "Save Memory",
+    description: "Save notes to your persistent memory file.",
+    parameters: Type.Object({
+      note: Type.String({ description: "Content to append to MEMORY.md" }),
+    }),
+    async execute(id, params, _sig, _upd, ctx) {
+      const agentKey = id.toLowerCase();
+      const state = agentStates.get(agentKey);
+      if (!state) return { content: [{ type: "text", text: `Agent not found.` }] };
+      
+      const hasWriteTools = state.def.tools.includes("write") || state.def.tools.includes("edit");
+      if (!hasWriteTools) return { content: [{ type: "text", text: `This agent does not have write tools.` }] };
+      
+      const { note } = params as { note: string };
+      const memoryDir = resolveMemoryDir(state.def.name, "project", ctx.cwd);
+      ensureMemoryDir(memoryDir);
+      const memoryFile = join(memoryDir, "MEMORY.md");
+      
+      const existing = safeReadFile(memoryFile) || "";
+      const timestamp = new Date().toISOString().slice(0, 10);
+      const entry = `\n\n## ${timestamp}\n${note}`;
+      const updated = existing + entry;
+      
+      try {
+        writeFileSync(memoryFile, updated, "utf-8");
+        return { content: [{ type: "text", text: `Memory saved to ${memoryFile}` }] };
+      } catch (e) {
+        return { content: [{ type: "text", text: `Failed to save memory: ${e}` }] };
+      }
+    },
+    renderCall: (args, theme) => {
+      const note = (args as any).note || "";
+      const preview = note.length > 30 ? note.slice(0, 27) + "..." : note;
+      return new Text(
+        theme.fg("toolTitle", theme.bold("save_memory ")) + theme.fg("dim", preview),
+        0, 0
+      );
+    },
+  });
+
   // ── Commands ─────────────────────────────────
 
   pi.registerCommand("agents-team", {
@@ -947,19 +989,12 @@ ${fullCatalog}
     widgetCtx = ctx;
     contextWindow = ctx.model?.contextWindow || 0;
     
-    const sessDir = join(ctx.cwd, ".pi", "agent-sessions");
-    if (existsSync(sessDir)) {
-      for (const f of readdirSync(sessDir)) {
-        if (f.endsWith(".json")) try { unlinkSync(join(sessDir, f)); } catch {}
-      }
-    }
-    
     loadAgents(ctx.cwd);
     if (Object.keys(teams).length > 0) {
       activateTeam(activeTeamName || Object.keys(teams)[0]);
     }
     
-    pi.setActiveTools(["dispatch_agent", "manage_team", "switch_team", "list_team_agents"]);
+    pi.setActiveTools(["dispatch_agent", "manage_team", "switch_team", "list_team_agents", "save_memory"]);
     updateWidget();
     
     ctx.ui.setFooter((_tui, theme) => ({
