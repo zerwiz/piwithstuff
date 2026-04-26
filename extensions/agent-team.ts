@@ -574,7 +574,7 @@ export default function (pi: ExtensionAPI) {
    * STICK-TO-BOTTOM: Team status line is the last item in the array.
    * DYNAMIC TOP: The list grows upwards into the scrollback as needed.
    */
-  function updateWidget() {
+function updateWidget() {
     if (!widgetCtx) return;
 
     widgetCtx.ui.setWidget("agent-team", (_tui: any, theme: any) => {
@@ -586,24 +586,23 @@ export default function (pi: ExtensionAPI) {
           const running = Array.from(agentStates.values()).some(s => s.status === "running");
           const safeWidth = Math.max(10, width - 2);
 
-          const agents = Array.from(agentStates.values());
           const lines: string[] = [];
-          
-          // Assemble specialist blocks top-to-bottom
-          for (let i = 0; i < agents.length; i++) {
-            // All agents use ├─ because the headingLine at the end is the final └─
-            lines.push(...renderTreeAgent(agents[i], false, width, theme));
-          }
 
-          // Team Dashboard Footer (Sticks to Prompt)
+          // Team Dashboard Header (Sticks to Top - orchestrator is the root)
           const headingLine = truncateToWidth(
-            theme.fg(running ? "accent" : "dim", "└─") + " " +
+            theme.fg(running ? "accent" : "dim", "├─") + " " +
             theme.fg(running ? "accent" : "dim", running ? "●" : "○") + " " +
             theme.fg(running ? "accent" : "dim", `Team Orchestrator Context: ${activeTeamName}`),
             safeWidth
           );
-          
           lines.push(headingLine);
+
+          // Assemble specialist blocks beneath the orchestrator (last gets └─)
+          const agents = Array.from(agentStates.values());
+          for (let i = 0; i < agents.length; i++) {
+            const isLast = i === agents.length - 1;
+            lines.push(...renderTreeAgent(agents[i], isLast, width, theme));
+          }
 
           text.setText(lines.join("\n"));
           return text.render(width);
@@ -847,6 +846,27 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerTool({
+    name: "list_team_agents",
+    label: "List Team Agents",
+    description: "List all agents in the active team with their tools.",
+    parameters: Type.Object({}),
+    async execute(_id, _params, _sig, _upd, _ctx) {
+      const members = Array.from(agentStates.values()).map(s => {
+        const model = s.def.model ? ` (${s.def.model})` : "";
+        return `### ${s.def.name}${model}\n- **Tools:** ${s.def.tools}\n- **Status:** ${s.status}`;
+      }).join("\n\n");
+      return { 
+        content: [{ 
+          type: "text", 
+          text: `### Active Team: ${activeTeamName}\n\n${members || "No agents loaded."}` 
+        }] 
+      };
+    },
+    renderCall: (_args, theme) =>
+      new Text(theme.fg("toolTitle", theme.bold("list_team_agents")) + theme.fg("dim", " (show active team)"), 0, 0),
+  });
+
   // ── Commands ─────────────────────────────────
 
   pi.registerCommand("agents-team", {
@@ -939,7 +959,7 @@ ${fullCatalog}
       activateTeam(activeTeamName || Object.keys(teams)[0]);
     }
     
-    pi.setActiveTools(["dispatch_agent", "manage_team", "switch_team"]);
+    pi.setActiveTools(["dispatch_agent", "manage_team", "switch_team", "list_team_agents"]);
     updateWidget();
     
     ctx.ui.setFooter((_tui, theme) => ({
