@@ -407,6 +407,20 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerTool({
+		name: "subagent_manage",
+		description: "See all available agent types that you can spawn with /sub or subagent_create. Use this to see what specialists are available in the system.",
+		parameters: Type.Object({}),
+		execute: async () => {
+			const list = Array.from(allAgentDefs.values())
+				.map(d => `- **${d.name}**: ${d.description}`)
+				.join("\n");
+			return {
+				content: [{ type: "text", text: `Available Specialists:\n${list || "None found."}` }],
+			};
+		},
+	});
+
 
 
 	// ── /sub <task> ───────────────────────────────────────────────────────────
@@ -549,6 +563,27 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// ── Session lifecycle ─────────────────────────────────────────────────────
+
+	pi.on("before_agent_start", async (_event, _ctx) => {
+		const available = Array.from(allAgentDefs.values())
+			.map(d => `- **${d.name}**: ${d.description}`)
+			.join("\n");
+
+		return {
+			systemPrompt: `You have the ability to spawn background subagents.
+Use \`subagent_create\` to start a new task.
+To use a specific specialist, use the format "agent_name: task" in the task description.
+
+## Available Specialists
+${available || "No specific specialists found."}
+
+## How to use
+- If you need a planner, use: \`subagent_create({ task: "planner: plan the refactor" })\`
+- If you need a builder, use: \`subagent_create({ task: "builder: implement the tests" })\`
+- You can see the full list of subagents with \`subagent_list\`.
+- You can see available agent types with \`subagent_manage\`.`
+		};
+	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		applyExtensionDefaults(import.meta.url, ctx);

@@ -592,6 +592,68 @@ export default function (pi: ExtensionAPI) {
 	// ── Tools & Commands ─────────────────────────
 
 	pi.registerTool({
+		name: "manage_team",
+		label: "Manage Team",
+		description: "Add or remove specialist agents from your active team. Use this to bring in experts needed for specific tasks or remove those no longer needed.",
+		parameters: Type.Object({
+			action: Type.Enum({ add: "add", remove: "remove" }),
+			agent: Type.String({ description: "The name of the agent to add or remove" }),
+		}),
+
+		async execute(_toolCallId, params, _signal, onUpdate, ctx) {
+			const { action, agent } = params as { action: "add" | "remove"; agent: string };
+			const key = agent.toLowerCase();
+
+			if (action === "add") {
+				if (agentStates.has(key)) {
+					return { content: [{ type: "text", text: `Agent "${agent}" is already in the team.` }] };
+				}
+				const def = allAgentDefs.find(d => d.name.toLowerCase() === key);
+				if (!def) {
+					return { content: [{ type: "text", text: `Agent "${agent}" not found in available specialists.` }] };
+				}
+				const agentKey = def.name.toLowerCase().replace(/\s+/g, "-");
+				const sessionFile = join(sessionDir, `${agentKey}.json`);
+				agentStates.set(key, {
+					def,
+					status: "idle",
+					task: "",
+					toolCount: 0,
+					elapsed: 0,
+					lastWork: "",
+					lastThinking: "",
+					contextPct: 0,
+					sessionFile: existsSync(sessionFile) ? sessionFile : null,
+					runCount: 0,
+					activeTools: new Set(),
+				});
+				updateWidget();
+				return { content: [{ type: "text", text: `Added specialist "${displayName(def.name)}" to the team.` }] };
+			} else {
+				if (!agentStates.has(key)) {
+					return { content: [{ type: "text", text: `Agent "${agent}" is not in the team.` }] };
+				}
+				const state = agentStates.get(key)!;
+				if (state.status === "running") {
+					return { content: [{ type: "text", text: `Cannot remove agent "${agent}" while it is running.` }] };
+				}
+				agentStates.delete(key);
+				updateWidget();
+				return { content: [{ type: "text", text: `Removed agent "${displayName(state.def.name)}" from the team.` }] };
+			}
+		},
+
+		renderCall(args, theme) {
+			const { action, agent } = args as any;
+			return new Text(
+				theme.fg("toolTitle", theme.bold("manage_team ")) +
+				theme.fg("accent", `${action} ${agent}`),
+				0, 0,
+			);
+		},
+	});
+
+	pi.registerTool({
 		name: "dispatch_agent",
 		label: "Dispatch Agent",
 		description: "Dispatch a task to a specialist agent. The agent will execute the task and return the result. Use the system prompt to see available agent names.",
@@ -732,6 +794,12 @@ export default function (pi: ExtensionAPI) {
 
 		const teamMembers = Array.from(agentStates.values()).map(s => displayName(s.def.name)).join(", ");
 
+		const teamKeys = new Set(Array.from(agentStates.keys()));
+		const availableSpecialists = allAgentDefs
+			.filter(d => !teamKeys.has(d.name.toLowerCase()))
+			.map(d => `- **${displayName(d.name)}**: ${d.description}`)
+			.join("\n");
+
 		return {
 			systemPrompt: `You are a dispatcher agent. You coordinate specialist agents to accomplish tasks.
 You do NOT have direct access to the codebase. You MUST delegate all work through
@@ -739,21 +807,27 @@ agents using the dispatch_agent tool.
 
 ## Active Team: ${activeTeamName}
 Members: ${teamMembers}
-You can ONLY dispatch to agents listed below. Do not attempt to dispatch to agents outside this team.
+You can ONLY dispatch to agents listed below.
+
+## Dynamic Team Management
+If you need a specialist that is not in your active team, you can use the \`manage_team\` tool to add them.
+
+## Available Specialists (not in team)
+${availableSpecialists || "None available."}
 
 ## How to Work
 - Analyze the user's request and break it into clear sub-tasks
 - Choose the right agent(s) for each sub-task
 - Dispatch tasks using the dispatch_agent tool
+- Use manage_team to bring in experts if needed
 - Review results and dispatch follow-up agents if needed
-- If a task fails, try a different agent or adjust the task description
 - Summarize the outcome for the user
 
 ## Rules
 - NEVER try to read, write, or execute code directly — you have no such tools
 - ALWAYS use dispatch_agent to get work done
+- Use manage_team tool to add/remove specialists as the project evolves
 - You can chain agents: use scout to explore, then builder to implement
-- You can dispatch the same agent multiple times with different tasks
 - Keep tasks focused — one clear objective per dispatch
 
 ## Agents

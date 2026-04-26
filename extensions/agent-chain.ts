@@ -518,6 +518,46 @@ export default function (pi: ExtensionAPI) {
 	// ── run_chain Tool ──────────────────────────
 
 	pi.registerTool({
+		name: "manage_team",
+		label: "Manage Team",
+		description: "Add or remove specialist agents from your active team. While chains have fixed steps, you can still bring in experts for direct delegation if needed.",
+		parameters: Type.Object({
+			action: Type.Enum({ add: "add", remove: "remove" }),
+			agent: Type.String({ description: "The name of the agent to add or remove" }),
+		}),
+
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			const { action, agent } = params as { action: "add" | "remove"; agent: string };
+			const key = agent.toLowerCase();
+
+			// For chain, we don't have a 'team' map in the same way, but we can manage agentSessions
+			// and allAgents. Actually, we should probably allow the dispatcher to have a 'dynamic team'
+			// in addition to the chain.
+			// However, agent-chain.ts is simpler. Let's just track a 'dynamic team' Set.
+
+			if (action === "add") {
+				const def = Array.from(allAgents.values()).find(d => d.name.toLowerCase() === key);
+				if (!def) {
+					return { content: [{ type: "text", text: `Agent "${agent}" not found in available specialists.` }] };
+				}
+				const agentKey = def.name.toLowerCase().replace(/\s+/g, "-");
+				const sessionFile = join(sessionDir, `chain-${agentKey}.json`);
+				if (!agentSessions.has(key)) {
+					agentSessions.set(key, existsSync(sessionFile) ? sessionFile : null);
+				}
+				return { content: [{ type: "text", text: `Specialist "${displayName(def.name)}" is now available for direct tasks.` }] };
+			} else {
+				if (!agentSessions.has(key)) {
+					return { content: [{ type: "text", text: `Agent "${agent}" is not in your dynamic team.` }] };
+				}
+				// We don't really 'remove' from allAgents, just ignore? 
+				// This is less critical for chain.
+				return { content: [{ type: "text", text: `Specialist "${agent}" removed from dynamic team.` }] };
+			}
+		},
+	});
+
+	pi.registerTool({
 		name: "run_chain",
 		label: "Run Chain",
 		description: "Execute the active agent chain pipeline. Each step runs sequentially — output from one step feeds into the next. Agents maintain session context across runs.",
@@ -682,6 +722,8 @@ export default function (pi: ExtensionAPI) {
 
 		// Build full agent catalog (like agent-team.ts)
 		const seen = new Set<string>();
+		const chainMembers = new Set(activeChain.steps.map(s => s.agent.toLowerCase()));
+
 		const agentCatalog = activeChain.steps
 			.filter(s => {
 				const key = s.agent.toLowerCase();
@@ -696,6 +738,11 @@ export default function (pi: ExtensionAPI) {
 			})
 			.join("\n\n");
 
+		const availableSpecialists = Array.from(allAgents.values())
+			.filter(d => !chainMembers.has(d.name.toLowerCase()))
+			.map(d => `- **${displayName(d.name)}**: ${d.description}`)
+			.join("\n");
+
 		return {
 			systemPrompt: `You are an agent with a sequential pipeline called "${activeChain.name}" at your disposal.${desc}
 You have full access to your own tools AND the run_chain tool to delegate to your team.
@@ -704,6 +751,11 @@ You have full access to your own tools AND the run_chain tool to delegate to you
 Flow: ${flow}
 
 ${steps}
+
+## Available Specialists (not in chain)
+If you need a specialist that is not in your current chain, you can use the \`manage_team\` tool to make them available for direct delegation.
+
+${availableSpecialists || "None available."}
 
 ## Agent Details
 
