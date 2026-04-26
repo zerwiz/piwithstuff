@@ -291,7 +291,64 @@ noDeletePaths:
 # If an override matches a path, its allow* flags determine what's permitted,
 # regardless of bashToolPatterns, zeroAccessPaths, readOnlyPaths, etc.
 pathOverrides:
+  # NEW: Unified code projects documentation structure - full permissions for agents
+  # This directory holds all agent-generated documentation, plans, reviews, build logs,
+  # security audits, session data, and web captures organized by project
+  - path: "~/Documents/codeprojects/*"
+    allowDeletions: true
+    allowWrites: true
+    allowEdits: true
+    allowReads: true
 
+  # Subdirectories for specific agent types - full access for organized storage
+  # Documentation agent outputs
+  - path: "~/Documents/codeprojects/*/*/documentation"
+    allowDeletions: true
+    allowWrites: true
+    allowEdits: true
+    allowReads: true
+
+  # Planning agent outputs
+  - path: "~/Documents/codeprojects/*/*/planning"
+    allowDeletions: true
+    allowWrites: true
+    allowEdits: true
+    allowReads: true
+
+  # Reviewer agent outputs
+  - path: "~/Documents/codeprojects/*/*/reviews"
+    allowDeletions: true
+    allowWrites: true
+    allowEdits: true
+    allowReads: true
+
+  # Developer agent build logs and backups
+  - path: "~/Documents/codeprojects/*/*/build-logs"
+    allowDeletions: true
+    allowWrites: true
+    allowEdits: true
+    allowReads: true
+
+  # Security audits (read-write for iterative auditing)
+  - path: "~/Documents/codeprojects/*/*/security-audits"
+    allowDeletions: true
+    allowWrites: true
+    allowEdits: true
+    allowReads: true
+
+  # Session manager project sessions
+  - path: "~/Documents/codeprojects/*/*/sessions"
+    allowDeletions: true
+    allowWrites: true
+    allowEdits: true
+    allowReads: true
+
+  # Bowser web captures and screenshots
+  - path: "~/Documents/codeprojects/*/*/web-output"
+    allowDeletions: true
+    allowWrites: true
+    allowEdits: true
+    allowReads: true
 
   # Active: Lock deletion for this entire workspace while allowing reads, writes, and edits
   - path: "~/woh"
@@ -327,7 +384,7 @@ pathOverrides:
     allowWrites: false
     allowEdits: false
     allowReads: true
-  
+
   # Example: Protect a critical production directory - deny all deletions
   # - path: "/home/production-data"
   #   allowDeletions: false
