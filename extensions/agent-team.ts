@@ -487,8 +487,9 @@ export default function (pi: ExtensionAPI) {
 		const key = agentName.toLowerCase();
 		const state = agentStates.get(key);
 		if (!state) {
+			const activeIds = Array.from(agentStates.keys()).map(k => `\`${k}\``).join(", ");
 			return Promise.resolve({
-				output: `Agent "${agentName}" not found.`,
+				output: `Agent "${agentName}" not found in your active team. Active IDs: ${activeIds || "none"}. If you need a different specialist, use \`manage_team\` first.`,
 				exitCode: 1,
 				elapsed: 0,
 			});
@@ -857,20 +858,35 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
+	pi.registerCommand("agents-status", {
+		description: "Show current team status and available specialists",
+		handler: async (_args, ctx) => {
+			const active = Array.from(agentStates.values()).map(s => `- **${displayName(s.def.name)}** (${s.status})`).join("\n");
+			const teamKeys = new Set(Array.from(agentStates.keys()));
+			const others = allAgentDefs
+				.filter(d => !teamKeys.has(d.name.toLowerCase()))
+				.map(d => `- ${displayName(d.name)} (inactive)`)
+				.join("\n");
+
+			const output = `### Active Team: ${activeTeamName}\n${active}\n\n### Other Available Specialists\n${others || "None"}`;
+			ctx.ui.notify(output, "info");
+		}
+	});
+
 	// ── Session Hooks ────────────────────────────
 
 	pi.on("before_agent_start", async (_event, _ctx) => {
 		// Build dynamic agent catalog from active team only
 		const agentCatalog = Array.from(agentStates.values())
-			.map(s => `### ${displayName(s.def.name)}\n**Dispatch as:** \`${s.def.name}\`\n${s.def.description}\n**Tools:** ${s.def.tools}`)
+			.map(s => `### ${displayName(s.def.name)} (ID: \`${s.def.name}\`)\n**Dispatch as:** \`${s.def.name}\`\n${s.def.description}\n**Tools:** ${s.def.tools}`)
 			.join("\n\n");
 
-		const teamMembers = Array.from(agentStates.values()).map(s => displayName(s.def.name)).join(", ");
+		const teamMembers = Array.from(agentStates.values()).map(s => `\`${s.def.name}\``).join(", ");
 
 		const teamKeys = new Set(Array.from(agentStates.keys()));
 		const availableSpecialists = allAgentDefs
 			.filter(d => !teamKeys.has(d.name.toLowerCase()))
-			.map(d => `- **${displayName(d.name)}**: ${d.description}`)
+			.map(d => `- **${displayName(d.name)}** (ID: \`${d.name}\`): ${d.description}`)
 			.join("\n");
 
 		const availableTeams = Object.keys(teams).join(", ");
@@ -880,37 +896,32 @@ export default function (pi: ExtensionAPI) {
 You do NOT have direct access to the codebase. You MUST delegate all work through
 agents using the dispatch_agent tool.
 
+## IMPORTANT: AGENT NAMES
+You can ONLY dispatch to or manage agents using their EXACT IDs (lowercase-kebab-case). 
+Do NOT hallucinate names like "code-agent" or "developer". Use the IDs provided below.
+
 ## Active Team: ${activeTeamName}
-Members: ${teamMembers}
-You can ONLY dispatch to agents listed below.
+Active IDs: ${teamMembers}
+You can ONLY use \`dispatch_agent\` with these active IDs.
 
 ## Dynamic Team Management
-- If you need a specialist that is not in your active team, you can use \`manage_team\` to add them.
-- If you want to swap your entire team for a different context, use \`switch_team\`.
+If you need a specialist that is not in your active team, you MUST use the \`manage_team\` tool to add them using their EXACT ID from the list below.
+- To swap your entire team context: \`switch_team({ teamName: "..." })\`
 
 ## Available Teams
 ${availableTeams}
 
-## Available Specialists (not in team)
+## Available Specialists (Inactive - Add with \`manage_team\`)
 ${availableSpecialists || "None available."}
 
 ## How to Work
-- Analyze the user's request and break it into clear sub-tasks
-- Choose the right agent(s) for each sub-task
-- Dispatch tasks using the dispatch_agent tool
-- Use manage_team or switch_team to bring in experts if needed
-- Review results and dispatch follow-up agents if needed
-- Summarize the outcome for the user
+1. Analyze the request.
+2. Identify which specialist ID is needed.
+3. If the ID is not in "Active IDs", use \`manage_team({ action: "add", agent: "ID" })\`.
+4. Use \`dispatch_agent({ agent: "ID", task: "..." })\`.
+5. Summarize the outcome.
 
-## Rules
-- NEVER try to read, write, or execute code directly — you have no such tools
-- ALWAYS use dispatch_agent to get work done
-- Use manage_team tool to add/remove specialists as the project evolves
-- Use switch_team to pivot to a different team set entirely
-- You can chain agents: use scout to explore, then builder to implement
-- Keep tasks focused — one clear objective per dispatch
-
-## Agents
+## Agents (Active Catalog)
 
 ${agentCatalog}`,
 		};
@@ -932,9 +943,18 @@ ${agentCatalog}`,
 		}
 
 		loadAgents(ctx.cwd);
-		if (Object.keys(teams).length > 0) activateTeam(Object.keys(teams)[0]);
 		
-		pi.setActiveTools(["dispatch_agent"]);
+		// Ensure we always have an active team
+		const teamNames = Object.keys(teams);
+		if (teamNames.length > 0) {
+			activateTeam(activeTeamName || teamNames[0]);
+		} else {
+			// Fallback to 'all' if no teams defined
+			teams = { all: allAgentDefs.map(d => d.name) };
+			activateTeam("all");
+		}
+		
+		pi.setActiveTools(["dispatch_agent", "manage_team", "switch_team"]);
 		
 		ctx.ui.setStatus("agent-team", `Team: ${activeTeamName} (${agentStates.size})`);
 		updateWidget();
@@ -952,7 +972,7 @@ ${agentCatalog}`,
 
 				const left = theme.fg("dim", ` ${model}`) +
 					theme.fg("muted", " · ") +
-					theme.fg("accent", activeTeamName);
+					theme.fg("accent", activeTeamName || "none");
 				const right = theme.fg("dim", `[${bar}] ${Math.round(pct)}% `);
 				const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
 

@@ -282,3 +282,9 @@ noDeletePaths:
   - "docker-compose.*.yml"
   - .dockerignore
   - /home/zerwiz/CodeP/CodepOS
+  - /home/zerwiz/
+  - /home/zerwiz/CodeP
+  - /home
+  - /home/zerwiz/CodeP/piwithstuff
+  - /home/zerwiz/CodeP/piwithstuff/.pi
+  - /home/zerwiz/.pi
