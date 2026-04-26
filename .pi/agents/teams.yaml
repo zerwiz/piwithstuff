@@ -27,8 +27,11 @@ frontend:
 
 pi-pi:
   - ext-expert
+  - ext-builder
   - theme-expert
   - skill-expert
+  - skill-builder
+  - pi-dev-expert
   - config-expert
   - tui-expert
   - prompt-expert

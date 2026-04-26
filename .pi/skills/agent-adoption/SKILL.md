@@ -1,3 +1,6 @@
+---
+description: Fully integrate new agents into the Pi orchestrator system using the Universal Agent Template.
+---
 # Skill: Agent Adoption
 
 This skill provides the protocol for fully integrating a new agent into the Pi orchestrator system using the Universal Agent Template.
