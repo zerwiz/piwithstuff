@@ -348,7 +348,7 @@ export default function (pi: ExtensionAPI) {
         output: `Agent "${agentName}" not found. Available: ${Array.from(
           agentStates.values(),
         )
-          .map((s) => displayName(s.def.name))
+          .map((s) => displayName(s.id))
           .join(", ")}`,
         exitCode: 1,
         elapsed: 0,
@@ -357,7 +357,7 @@ export default function (pi: ExtensionAPI) {
 
     if (state.status === "running") {
       return Promise.resolve({
-        output: `Agent "${displayName(state.def.name)}" is already running. Wait for it to finish.`,
+        output: `Agent "${displayName(state.id)}" is already running. Wait for it to finish.`,
         exitCode: 1,
         elapsed: 0,
       });
@@ -382,7 +382,7 @@ export default function (pi: ExtensionAPI) {
       : "openrouter/google/gemini-3-flash-preview";
 
     // Session file for this agent
-    const agentKey = state.def.name.toLowerCase().replace(/\s+/g, "-");
+    const agentKey = state.id.toLowerCase();
     const agentSessionFile = join(sessionDir, `${agentKey}.json`);
 
     // Build args — first run creates session, subsequent runs resume
@@ -394,11 +394,11 @@ export default function (pi: ExtensionAPI) {
       "--model",
       model,
       "--tools",
-      state.def.tools,
+      state.tools,
       "--thinking",
       "off",
       "--append-system-prompt",
-      state.def.systemPrompt,
+      state.systemPrompt,
       "--session",
       agentSessionFile,
     ];
@@ -500,7 +500,7 @@ export default function (pi: ExtensionAPI) {
         updateWidget();
 
         ctx.ui.notify(
-          `${displayName(state.def.name)} ${state.status} in ${Math.round(state.elapsed / 1000)}s`,
+          `${displayName(state.id)} ${state.status} in ${Math.round(state.elapsed / 1000)}s`,
           state.status === "done" ? "success" : "error",
         );
 
@@ -671,7 +671,7 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus("agent-team", `Team: ${name} (${agentStates.size})`);
       ctx.ui.notify(
         `Team: ${name} — ${Array.from(agentStates.values())
-          .map((s) => displayName(s.def.name))
+          .map((s) => displayName(s.id))
           .join(", ")}`,
         "info",
       );
@@ -685,7 +685,7 @@ export default function (pi: ExtensionAPI) {
       const names = Array.from(agentStates.values())
         .map((s) => {
           const session = s.sessionFile ? "resumed" : "new";
-          return `${displayName(s.def.name)} (${s.status}, ${session}, runs: ${s.runCount}): ${s.def.description}`;
+          return `${displayName(s.id)} (${s.status}, ${session}, runs: ${s.runCount}): ${s.description}`;
         })
         .join("\n");
       _ctx.ui.notify(names || "No agents loaded", "info");
@@ -722,12 +722,12 @@ export default function (pi: ExtensionAPI) {
     const agentCatalog = Array.from(agentStates.values())
       .map(
         (s) =>
-          `### ${displayName(s.def.name)}\n**Dispatch as:** \`${s.def.name}\`\n${s.def.description}\n**Tools:** ${s.def.tools}`,
+          `### ${displayName(s.id)}\n**Dispatch as:** \`${s.id}\`\n${s.description}\n**Tools:** ${s.tools}`,
       )
       .join("\n\n");
 
     const teamMembers = Array.from(agentStates.values())
-      .map((s) => displayName(s.def.name))
+      .map((s) => displayName(s.id))
       .join(", ");
 
     return {
@@ -799,7 +799,7 @@ ${agentCatalog}`,
       `Team: ${activeTeamName} (${agentStates.size})`,
     );
     const members = Array.from(agentStates.values())
-      .map((s) => displayName(s.def.name))
+      .map((s) => displayName(s.id))
       .join(", ");
     _ctx.ui.notify(
       `Team: ${activeTeamName} (${members})\n` +
