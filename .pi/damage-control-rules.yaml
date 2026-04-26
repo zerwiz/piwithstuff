@@ -269,7 +269,6 @@ noDeletePaths:
   - "CONTRIBUTING.md"
   - "CHANGELOG.md"
   - "CODE_OF_CONDUCT.md"
-  - "SECURITY.md"
   - .git/
   - .gitignore
   - .gitattributes
@@ -292,3 +291,44 @@ noDeletePaths:
   - /home/zerwiz/CodeP/piwithstuff
   - /home/zerwiz/CodeP/piwithstuff/.pi
   - /home/zerwiz/.pi
+
+# Path-based override rules (HIGHEST PRIORITY)
+# These rules take precedence over ALL other damage-control checks.
+# Specify exact paths or glob patterns and fine-grained operation permissions.
+# If an override matches a path, its allow* flags determine what's permitted,
+# regardless of bashToolPatterns, zeroAccessPaths, readOnlyPaths, etc.
+pathOverrides:
+  # Example: Protect a critical production directory - deny all deletions
+  # - path: "/home/zerwiz/production-data"
+  #   allowDeletions: false
+  #   allowWrites: true
+  #   allowEdits: true
+  #   allowReads: true
+
+  # Example: Make a config directory read-only (no writes or deletes)
+  # - path: "/etc/myapp"
+  #   allowDeletions: false
+  #   allowWrites: false
+  #   allowEdits: false
+  #   allowReads: true
+
+  # Example: Completely lock down a sensitive directory (no read/write/delete/edit)
+  # - path: "~/.secrets"
+  #   allowDeletions: false
+  #   allowWrites: false
+  #   allowEdits: false
+  #   allowReads: false
+
+  # Example: Glob pattern - protect all .env files anywhere in the project
+  # - path: "**/.env"
+  #   allowDeletions: false
+  #   allowWrites: false
+  #   allowEdits: false
+  #   allowReads: false
+
+   # Current project: lock deletion for this entire workspace while allowing reads, writes, and edits
+   - path: "/home/zerwiz/woh"
+     allowDeletions: false
+     allowWrites: true
+     allowEdits: true
+     allowReads: true

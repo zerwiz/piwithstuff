@@ -12,11 +12,20 @@ interface Rule {
 	ask?: boolean;
 }
 
+interface PathOverride {
+	path: string;
+	allowDeletions?: boolean; // default true
+	allowWrites?: boolean;    // default true — controls `write` tool (create/overwrite)
+	allowEdits?: boolean;     // default true — controls `edit` and `replace` tools (modify existing)
+	allowReads?: boolean;     // default true
+}
+
 interface Rules {
 	bashToolPatterns: Rule[];
 	zeroAccessPaths: string[];
 	readOnlyPaths: string[];
 	noDeletePaths: string[];
+	pathOverrides?: PathOverride[];
 	projectRoot?: string; // Optional project root for isolation
 }
 
@@ -67,6 +76,52 @@ export default function (pi: ExtensionAPI) {
 		return regex.test(targetPath) || regex.test(relativePath) || targetPath.includes(resolvedPattern) || relativePath.includes(resolvedPattern);
 	}
 
+	/**
+	 * Checks if any path override applies to the given target path/tool.
+	 * Overrides take absolute precedence over all other rules.
+	 */
+	function checkPathOverrides(cwd: string, targetPath: string, toolName: string, command?: string): { blocked: boolean; reason: string | null } {
+		if (!rules.pathOverrides || rules.pathOverrides.length === 0) {
+			return { blocked: false, reason: null };
+		}
+
+		const resolvedTarget = resolvePath(targetPath, cwd);
+
+		for (const override of rules.pathOverrides) {
+			if (!isPathMatch(resolvedTarget, override.path, cwd)) {
+				continue;
+			}
+
+			// Determine if this is a deletion operation
+			const isDeleteOp = toolName === "bash" && command && /\b(rm|rmdir|unlink)\b/.test(command);
+
+			// Check operation-specific allow flags
+			if (isDeleteOp && override.allowDeletions === false) {
+				return { blocked: true, reason: `Path override: Deletion blocked for path matching ${override.path}` };
+			}
+
+			if (toolName === "write") {
+				if (override.allowWrites === false) {
+					return { blocked: true, reason: `Path override: Write/create blocked for path matching ${override.path}` };
+				}
+			}
+
+			if (toolName === "edit" || toolName === "replace") {
+				if (override.allowEdits === false) {
+					return { blocked: true, reason: `Path override: Edit/modify blocked for path matching ${override.path}` };
+				}
+			}
+
+			if (toolName === "read" || toolName === "grep" || toolName === "find" || toolName === "ls") {
+				if (override.allowReads === false) {
+					return { blocked: true, reason: `Path override: Read/access blocked for path matching ${override.path}` };
+				}
+			}
+		}
+
+		return { blocked: false, reason: null };
+	}
+
 	pi.on("session_start", async (_event, ctx) => {
 		applyExtensionDefaults(import.meta.url, ctx);
 		const projectRulesPath = path.join(ctx.cwd, ".pi", "damage-control-rules.yaml");
@@ -75,14 +130,15 @@ export default function (pi: ExtensionAPI) {
 		try {
 			if (rulesPath) {
 				const content = fs.readFileSync(rulesPath, "utf8");
-				const loaded = yamlParse(content) as Partial<Rules>;
-				rules = {
-					bashToolPatterns: loaded.bashToolPatterns || [],
-					zeroAccessPaths: loaded.zeroAccessPaths || [],
-					readOnlyPaths: loaded.readOnlyPaths || [],
-					noDeletePaths: loaded.noDeletePaths || [],
-					projectRoot: loaded.projectRoot,
-				};
+			const loaded = yamlParse(content) as Partial<Rules>;
+			rules = {
+				bashToolPatterns: loaded.bashToolPatterns || [],
+				zeroAccessPaths: loaded.zeroAccessPaths || [],
+				readOnlyPaths: loaded.readOnlyPaths || [],
+				noDeletePaths: loaded.noDeletePaths || [],
+				pathOverrides: loaded.pathOverrides || [],
+				projectRoot: loaded.projectRoot,
+			};
 
 				if (rules.projectRoot) {
 					writeAllowedRoot = resolvePath(rules.projectRoot, ctx.cwd);
@@ -134,6 +190,38 @@ export default function (pi: ExtensionAPI) {
 			inputPaths.push(event.input.path);
 		} else if (isToolCallEventType("grep", event) || isToolCallEventType("find", event) || isToolCallEventType("ls", event)) {
 			inputPaths.push(event.input.path || ".");
+		}
+
+		// 1.5. Path Override Check (HIGHEST PRIORITY - runs before ALL other rules)
+		if (!violationReason) {
+			// Collect all paths to check: file tool paths + bash command paths
+			const pathsToCheck = new Set<string>();
+			for (const p of inputPaths) {
+				try {
+					pathsToCheck.add(resolvePath(p, ctx.cwd));
+				} catch {}
+			}
+
+			// Also extract paths from bash commands
+			if (isToolCallEventType("bash", event)) {
+				const command = event.input.command;
+				// Extract absolute and home-expanded paths from bash command
+				const extractedPaths = command.match(/\/[^\s;|<>|]+|~\/[^\s;|<>|]+/g) || [];
+				for (const p of extractedPaths) {
+					try {
+						pathsToCheck.add(resolvePath(p, ctx.cwd));
+					} catch {}
+				}
+			}
+
+			// Check each path against overrides
+			for (const checkPath of pathsToCheck) {
+				const overrideResult = checkPathOverrides(ctx.cwd, checkPath, event.toolName, isToolCallEventType("bash", event) ? event.input.command : undefined);
+				if (overrideResult.blocked) {
+					violationReason = overrideResult.reason;
+					break;
+				}
+			}
 		}
 
 		// 2. Project Isolation & Deletion Check
