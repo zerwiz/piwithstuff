@@ -1,7 +1,7 @@
-org:
+main:
   - scout
   - planner
-  - builder
+  - developer
   - reviewer
   - documenter
   - red-team
@@ -9,7 +9,7 @@ org:
 
 plan-build:
   - planner
-  - builder
+  - developer
   - reviewer
   - session-manager # NEW: Session tracking
 
@@ -21,7 +21,9 @@ info:
 
 frontend:
   - planner
-  - builder
+  - frontendcoder
+  - scout
+  - reviewer
   - bowser
   - session-manager # NEW: Frontend session management
 
@@ -39,7 +41,7 @@ pi-pi:
   - session-expert # NEW: Session expertise
 
 Extra:
-  - builder
+  - developer
   - reviewer
   - scout
   - dispatcher

@@ -1,5 +1,5 @@
 ---
-name: builder
+name: developer
 description: Implementation and code generation
 models: 
 tools: read,write,edit,bash,grep,find,ls
