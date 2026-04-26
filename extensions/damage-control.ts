@@ -1,10 +1,11 @@
 import type { ExtensionAPI, ToolCallEvent } from "@mariozechner/pi-coding-agent";
-import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
+import { isToolCallEventType, matchesKey } from "@mariozechner/pi-coding-agent";
 import { parse as yamlParse } from "yaml";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { applyExtensionDefaults } from "./themeMap.ts";
+import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 
 interface Rule {
 	pattern: string;
@@ -14,11 +15,11 @@ interface Rule {
 
 interface PathOverride {
 	path: string;
-	allowDeletions?: boolean; // default true
-	allowWrites?: boolean;    // default true — controls `write` tool (create/overwrite)
-	allowWriteIn?: string;    // optional subdirectory (relative to matched path) where writes are additionally required to reside
-	allowEdits?: boolean;     // default true — controls `edit` and `replace` tools (modify existing)
-	allowReads?: boolean;     // default true
+	allowDeletions?: boolean;
+	allowWrites?: boolean;
+	allowWriteIn?: string;
+	allowEdits?: boolean;
+	allowReads?: boolean;
 }
 
 interface Rules {
@@ -27,10 +28,13 @@ interface Rules {
 	readOnlyPaths: string[];
 	noDeletePaths: string[];
 	pathOverrides?: PathOverride[];
-	projectRoot?: string; // Optional project root for isolation
+	projectRoot?: string;
 }
 
 export default function (pi: ExtensionAPI) {
+
+	// ── Shared State ────────────────────────────────────────
+
 	let rules: Rules = {
 		bashToolPatterns: [],
 		zeroAccessPaths: [],
@@ -40,6 +44,10 @@ export default function (pi: ExtensionAPI) {
 
 	let writeAllowedRoot: string | null = null;
 	let sessionDeletePermission: "allowed" | "blocked" | "ask" = "ask";
+	let modalCtx: ExtensionAPI["ui"] | null = null;
+	const modalWidgetKey = "damage-control-modal";
+
+	// ── Path Helpers ────────────────────────────────────────
 
 	function resolvePath(p: string, cwd: string): string {
 		if (p.startsWith("~")) {
@@ -54,27 +62,239 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	function isPathMatch(targetPath: string, pattern: string, cwd: string): boolean {
-		// Simple glob-to-regex or substring match
-		// Expand tilde in pattern if present
 		const resolvedPattern = pattern.startsWith("~") ? path.join(os.homedir(), pattern.slice(1)) : pattern;
-
-		// If pattern ends with /, it's a directory match
 		if (resolvedPattern.endsWith("/")) {
 			const absolutePattern = path.isAbsolute(resolvedPattern) ? resolvedPattern : path.resolve(cwd, resolvedPattern);
 			return targetPath.startsWith(absolutePattern);
 		}
-
-		// Handle basic wildcards *
 		const regexPattern = resolvedPattern
-			.replace(/[.+^${}()|[\]\\]/g, "\\$&") // escape regex chars
-			.replace(/\*/g, ".*"); // convert * to .*
-
+			.replace(/[.+^${}()|[\]\\]/g, "\\$&")
+			.replace(/\*/g, ".*");
 		const regex = new RegExp(`^${regexPattern}$|^${regexPattern}/|/${regexPattern}$|/${regexPattern}/`);
-
-		// Match against absolute path and relative-to-cwd path
 		const relativePath = path.relative(cwd, targetPath);
-
 		return regex.test(targetPath) || regex.test(relativePath) || targetPath.includes(resolvedPattern) || relativePath.includes(resolvedPattern);
+	}
+
+	// ── Damage Control Modal Component ───────────────────────
+
+	type ModalTab = "status" | "rules" | "permissions";
+
+	class DamageControlModal {
+		private theme: any;
+		private done: () => void;
+		private cwd: string;
+
+		constructor(
+			theme: any,
+			done: () => void,
+			cwd: string,
+		) {
+			this.theme = theme;
+			this.done = done;
+			this.cwd = cwd;
+		}
+
+		invalidate() {}
+
+		handleInput(data: string): void {
+			if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+				this.done();
+				return;
+			}
+			if (matchesKey(data, "tab") || matchesKey(data, "right")) {
+				const tabs: ModalTab[] = ["status", "rules", "permissions"];
+				const currentIdx = tabs.indexOf(this.activeTab);
+				this.activeTab = tabs[(currentIdx + 1) % tabs.length];
+				this.cursor = 0;
+				this.invalidate();
+				return;
+			}
+			if (matchesKey(data, "shift+tab") || matchesKey(data, "left")) {
+				const tabs: ModalTab[] = ["status", "rules", "permissions"];
+				const currentIdx = tabs.indexOf(this.activeTab);
+				this.activeTab = tabs[(currentIdx - 1 + tabs.length) % tabs.length];
+				this.cursor = 0;
+				this.invalidate();
+				return;
+			}
+			if (matchesKey(data, "up") || matchesKey(data, "k")) {
+				if (this.cursor > 0) this.cursor--;
+				this.invalidate();
+				return;
+			}
+			if (matchesKey(data, "down") || matchesKey(data, "j")) {
+				const max = this.maxCursor();
+				if (this.cursor < max) this.cursor++;
+				this.invalidate();
+				return;
+			}
+			if (matchesKey(data, "enter")) {
+				this.selectCurrent();
+				this.invalidate();
+				return;
+			}
+		}
+
+		private activeTab: ModalTab = "status";
+		private cursor: number = 0;
+
+		private maxCursor(): number {
+			switch (this.activeTab) {
+				case "status": return 1;
+				case "rules": return 0;
+				case "permissions": return 2;
+				default: return 0;
+			}
+		}
+
+		private selectCurrent(): void {
+			switch (this.activeTab) {
+				case "status":
+					if (this.cursor === 0) {
+						writeAllowedRoot = writeAllowedRoot ? null : this.cwd;
+					} else if (this.cursor === 1) {
+						const perms: ("allowed" | "blocked" | "ask")[] = ["ask", "allowed", "blocked"];
+						const idx = perms.indexOf(sessionDeletePermission);
+						sessionDeletePermission = perms[(idx + 1) % perms.length];
+					}
+					break;
+				case "rules":
+					if (this.cursor === 0) {
+						if (modalCtx) modalCtx.notify("Use /dc-reload to reload rules from disk", "info");
+					}
+					break;
+				case "permissions":
+					sessionDeletePermission = ["ask", "allowed", "blocked"][this.cursor] as "ask" | "allowed" | "blocked";
+					break;
+			}
+		}
+
+		render(width: number): string[] {
+			const th = this.theme;
+			const lines: string[] = [];
+
+			const modalWidth = Math.min(width - 4, 70);
+			const leftPad = Math.floor((width - modalWidth) / 2);
+			const topPadding = 4;
+
+			// Empty lines at top for vertical centering-ish
+			for (let i = 0; i < topPadding; i++) lines.push("");
+
+			// Top border
+			const innerWidth = modalWidth - 2;
+			const topBorder = th.fg("border", "┌" + "─".repeat(innerWidth) + "┐");
+			lines.push(" ".repeat(leftPad) + topBorder);
+
+			// Title line
+			const title = " 🛡️ Damage Control ";
+			const emptyBorder = th.fg("border", "│");
+			const titleRow = emptyBorder +
+				" ".repeat(Math.max(0, innerWidth - visibleWidth(title))) +
+				th.fg("accent", title) +
+				" ".repeat(Math.max(0, innerWidth - visibleWidth(title) - visibleWidth(title))) +
+				emptyBorder;
+			lines.push(" ".repeat(leftPad) + truncateToWidth(titleRow, width));
+
+			// Tab bar
+			const tabs = [
+				th.fg(this.activeTab === "status" ? "accent" : "dim", " ● Status "),
+				th.fg(this.activeTab === "rules" ? "accent" : "dim", " Rules "),
+				th.fg(this.activeTab === "permissions" ? "accent" : "dim", " Permissions "),
+			];
+			const tabRow = emptyBorder + tabs.join(th.fg("dim", " │ ")) + " ".repeat(Math.max(0, innerWidth - visibleWidth(tabs.join("  ")))) + emptyBorder;
+			lines.push(" ".repeat(leftPad) + truncateToWidth(tabRow, width));
+			lines.push(" ".repeat(leftPad) + truncateToWidth(emptyBorder + "─".repeat(innerWidth) + emptyBorder, width));
+
+			// Content area
+			const content = this.renderContent(innerWidth);
+			for (const line of content) {
+				lines.push(" ".repeat(leftPad) + truncateToWidth(emptyBorder + " " + line + " ".repeat(Math.max(0, innerWidth - visibleWidth(line) - 1)) + emptyBorder, width));
+			}
+
+			// Bottom border
+			lines.push(" ".repeat(leftPad) + truncateToWidth(emptyBorder + "─".repeat(innerWidth) + emptyBorder, width));
+
+			// Help line
+			const help = " [Tab] switch  [↑↓] navigate  [Enter] toggle  [Esc] close ";
+			const helpRow = emptyBorder +
+				th.fg("dim", help) +
+				" ".repeat(Math.max(0, innerWidth - visibleWidth(help))) +
+				emptyBorder;
+			lines.push(" ".repeat(leftPad) + truncateToWidth(helpRow, width));
+
+			return lines;
+		}
+
+		private renderContent(width: number): string[] {
+			const th = this.theme;
+			const lines: string[] = [];
+
+			switch (this.activeTab) {
+				case "status": {
+					lines.push(`${th.fg("muted", "Project Root:")} ${writeAllowedRoot ? th.fg("success", writeAllowedRoot) : th.fg("dim", "none (unrestricted)")}`);
+					lines.push("");
+
+					const cursor0 = this.cursor === 0 ? th.fg("accent", " ▶ ") : "   ";
+					lines.push(`${cursor0}${th.fg("muted", "Set write root to current directory")} ${th.fg("dim", this.cwd)}`);
+
+					lines.push("");
+
+					const deleteStatus = sessionDeletePermission === "ask"
+						? th.fg("warning", "ask")
+						: sessionDeletePermission === "allowed"
+							? th.fg("success", "allowed")
+							: th.fg("error", "blocked");
+
+					const cursor1 = this.cursor === 1 ? th.fg("accent", " ▶ ") : "   ";
+					lines.push(`${cursor1}${th.fg("muted", "Deletion permission: ")}${deleteStatus}`);
+
+					if (this.cursor === 1) {
+						lines.push(th.fg("dim", "  Cycle: ask → allowed → blocked"));
+					}
+
+					lines.push("");
+					lines.push(th.fg("muted", `  Rules loaded: ${rules.bashToolPatterns.length + rules.zeroAccessPaths.length + rules.readOnlyPaths.length + rules.noDeletePaths.length}`));
+					break;
+				}
+				case "rules": {
+					lines.push(th.fg("muted", "  Rule counts:"));
+					lines.push(th.fg("dim", `    Bash patterns: ${rules.bashToolPatterns.length}`));
+					lines.push(th.fg("dim", `    Zero-access: ${rules.zeroAccessPaths.length}`));
+					lines.push(th.fg("dim", `    Read-only: ${rules.readOnlyPaths.length}`));
+					lines.push(th.fg("dim", `    No-delete: ${rules.noDeletePaths.length}`));
+					lines.push("");
+					lines.push(th.fg("muted", `  Path overrides: ${rules.pathOverrides?.length || 0}`));
+					lines.push("");
+					const cursor0 = this.cursor === 0 ? th.fg("accent", " ▶ ") : "   ";
+					lines.push(`${cursor0}${th.fg("muted", "Reload rules from disk")}  ${th.fg("dim", "(/dc-reload)")}`);
+					break;
+				}
+				case "permissions": {
+					lines.push(th.fg("muted", "  Deletion protection:"));
+					lines.push("");
+					const options = ["ask", "allowed", "blocked"];
+					options.forEach((opt, i) => {
+						const selected = sessionDeletePermission === opt;
+						const marker = this.cursor === i
+							? (selected ? th.fg("success", " ● ") : th.fg("accent", " ○ "))
+							: (selected ? th.fg("success", " ● ") : th.fg("dim", " ○ "));
+						const label = selected ? th.fg("accent", opt.charAt(0).toUpperCase() + opt.slice(1)) : th.fg("dim", opt);
+						const desc = opt === "ask" ? "— prompt each time" : opt === "allowed" ? "— no prompts" : "— always block";
+						if (this.cursor === i) {
+							lines.push(` ${marker}${label} ${th.fg("dim", desc)}`);
+						} else {
+							lines.push(` ${marker}${label}  ${th.fg("dim", desc)}`);
+						}
+					});
+					break;
+				}
+			}
+
+			lines.push("");
+			lines.push(th.fg("dim", "  Press Enter on an item to modify it"));
+
+			return lines;
+		}
 	}
 
 	/**
@@ -132,6 +352,8 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		applyExtensionDefaults(import.meta.url, ctx);
+		modalCtx = ctx.ui;
+
 		const projectRulesPath = path.join(ctx.cwd, ".pi", "damage-control-rules.yaml");
 		const globalRulesPath = path.join(os.homedir(), ".pi", "damage-control-rules.yaml");
 		const rulesPath = fs.existsSync(projectRulesPath) ? projectRulesPath : fs.existsSync(globalRulesPath) ? globalRulesPath : null;
@@ -164,8 +386,8 @@ export default function (pi: ExtensionAPI) {
 			ctx.ui.notify(`🛡️ Damage-Control: Failed to load rules: ${err instanceof Error ? err.message : String(err)}`);
 		}
 
-		const status = writeAllowedRoot 
-			? `🛡️ Isolation: ${path.basename(writeAllowedRoot)} | Rules Active` 
+		const status = writeAllowedRoot
+			? `🛡️ Isolation: ${path.basename(writeAllowedRoot)} | Rules Active`
 			: `🛡️ Damage-Control Active: ${rules.bashToolPatterns.length + rules.zeroAccessPaths.length + rules.readOnlyPaths.length + rules.noDeletePaths.length} Rules`;
 		ctx.ui.setStatus(status);
 	});
@@ -180,11 +402,81 @@ export default function (pi: ExtensionAPI) {
 				writeAllowedRoot = resolvePath(args.trim(), ctx.cwd);
 				ctx.ui.notify(`Project isolation enabled. Write access restricted to: ${writeAllowedRoot}`, "success");
 			}
-			const status = writeAllowedRoot 
-				? `🛡️ Isolation: ${path.basename(writeAllowedRoot)} | Rules Active` 
+			const status = writeAllowedRoot
+				? `🛡️ Isolation: ${path.basename(writeAllowedRoot)} | Rules Active`
 				: `🛡️ Damage-Control Active: ${rules.bashToolPatterns.length + rules.zeroAccessPaths.length + rules.readOnlyPaths.length + rules.noDeletePaths.length} Rules`;
 			ctx.ui.setStatus(status);
 		}
+	});
+
+	pi.registerCommand("dc-reload", {
+		description: "Reload damage-control rules from .pi/damage-control-rules.yaml",
+		handler: async (_args, ctx) => {
+			// Re-load rules from disk
+			const projectRulesPath = path.join(ctx.cwd, ".pi", "damage-control-rules.yaml");
+			const globalRulesPath = path.join(os.homedir(), ".pi", "damage-control-rules.yaml");
+			const rulesPath = fs.existsSync(projectRulesPath) ? projectRulesPath : fs.existsSync(globalRulesPath) ? globalRulesPath : null;
+
+			if (!rulesPath) {
+				ctx.ui.notify("No rules file found at .pi/damage-control-rules.yaml", "warning");
+				return;
+			}
+
+			try {
+				const content = fs.readFileSync(rulesPath, "utf8");
+				const loaded = yamlParse(content) as Partial<Rules>;
+				rules = {
+					bashToolPatterns: loaded.bashToolPatterns || [],
+					zeroAccessPaths: loaded.zeroAccessPaths || [],
+					readOnlyPaths: loaded.readOnlyPaths || [],
+					noDeletePaths: loaded.noDeletePaths || [],
+					pathOverrides: loaded.pathOverrides || [],
+					projectRoot: loaded.projectRoot,
+				};
+				if (rules.projectRoot) {
+					writeAllowedRoot = resolvePath(rules.projectRoot, ctx.cwd);
+				} else {
+					writeAllowedRoot = null;
+				}
+
+				const source = rulesPath === projectRulesPath ? "project" : "global";
+				ctx.ui.notify(`🛡️ Reloaded ${rules.bashToolPatterns.length + rules.zeroAccessPaths.length + rules.readOnlyPaths.length + rules.noDeletePaths.length} rules (${source}).`, "success");
+
+				const status = writeAllowedRoot
+					? `🛡️ Isolation: ${path.basename(writeAllowedRoot)} | Rules Active`
+					: `🛡️ Damage-Control Active: ${rules.bashToolPatterns.length + rules.zeroAccessPaths.length + rules.readOnlyPaths.length + rules.noDeletePaths.length} Rules`;
+				ctx.ui.setStatus(status);
+			} catch (err) {
+				ctx.ui.notify(`Failed to reload rules: ${err instanceof Error ? err.message : String(err)}`, "error");
+			}
+		}
+	});
+
+	pi.registerCommand("damage-control", {
+		description: "Open Damage Control settings and status modal",
+		handler: async (_args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("damage-control modal requires interactive mode", "error");
+				return;
+			}
+
+			modalCtx = ctx.ui;
+
+			const modal = new DamageControlModal(
+				ctx.theme,
+				() => {
+					ctx.ui.setWidget(modalWidgetKey, undefined);
+					modalCtx = null;
+				},
+				ctx.cwd,
+			);
+
+			ctx.ui.setWidget(modalWidgetKey, (_tui, theme) => ({
+				render: (w) => modal.render(w),
+				handleInput: (data) => modal.handleInput(data),
+				invalidate: () => modal.invalidate(),
+			}), { placement: "aboveEditor" });
+		},
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
