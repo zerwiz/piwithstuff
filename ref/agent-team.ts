@@ -1,7 +1,18 @@
 /**
- * agent-team.ts — Multi-agent team with full tree view and switching capabilities
+ * Agent Team — Dispatcher-only orchestrator with grid dashboard
  *
- * A complete extension that implements a full agent team with:
+ * The primary Pi agent has NO codebase tools. It can ONLY delegate work
+ * to specialist agents via the `dispatch_agent` tool. Each specialist
+ * maintains its own Pi session for cross-invocation memory.
+ *
+ * Loads agent definitions from agents/*.md, .claude/agents/*.md, .pi/agents/*.md.
+ * Teams are defined in .pi/agents/teams.yaml — on boot a select dialog lets
+ * you pick which team to work with. Only team members are available for dispatch.
+ *
+ * Commands:
+ *   /agents-team          — switch active team
+ *   /agents-list          — list loaded agents
+ *   /agents-grid N        — set column count (default 2)
  * - Tree UI view showing all 6 agents with proper icons and descriptions
  * - Functional actions for each agent (run, inspect, toggle, etc.)
  * - Support for switching between active agents
@@ -12,8 +23,16 @@
  * @license MIT
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-
+ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+ import { Type } from "@sinclair/typebox";
+ import { Text, type AutocompleteItem, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+ import { spawn } from "child_process";
+ import { readdirSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
+ import { join, resolve } from "path";
+ import { applyExtensionDefaults } from "./themeMap.ts";
+ 
+ // ── Types ──────────────────────────────────────── 
+ 
 interface Agent {
   id: string;
   name: string;
@@ -25,62 +44,66 @@ interface Agent {
   output?: string;
 }
 
-interface TeamState {
-  agents: Agent[];
-  activeAgentId: string | null;
-  switchMode: "idle" | "running";
-  lastAction: string | null;
+interface AgentState {
+	def: AgentDef;
+	status: "idle" | "running" | "done" | "error";
+	task: string;
+	toolCount: number;
+	elapsed: number;
+	lastWork: string;
+	contextPct: number;
+	sessionFile: string | null;
+	runCount: number;
+	timer?: ReturnType<typeof setInterval>;
 }
 
-/**
- * Team configuration for all agents
- */
-const TEAM_CONFIG: {
-  [key: string]: {
-    role: string;
-    description: string;
-    icon: string;
-    prompt: string;
-  };
-} = {
-  scout: {
-    role: "Scout",
-    description: "Explore the codebase and gather initial information",
-    icon: "🔍",
-    prompt: "Scan and explore the codebase to understand the project structure, dependencies, and entry points.",
-  },
-  planner: {
-    role: "Planner",
-    description: "Architect and plan the implementation strategy",
-    icon: "🏗️",
-    prompt: "Plan the architecture and implementation strategy for the task.",
-  },
-  builder: {
-    role: "Builder",
-    description: "Implement the planned solution with coding",
-    icon: "🔨",
-    prompt: "Implement the planned solution. Write code, run tests, and build artifacts.",
-  },
-  reviewer: {
-    role: "Reviewer",
-    description: "Review and validate the implementation",
-    icon: "📋",
-    prompt: "Review the implementation for correctness, efficiency, and best practices.",
-  },
-  documenter: {
-    role: "Documenter",
-    description: "Document the solution and create relevant artifacts",
-    icon: "📝",
-    prompt: "Document the implementation and create relevant documentation.",
-  },
-  "red-team": {
-    role: "Red Team",
-    description: "Perform security and adversarial testing",
-    icon: "⚠️",
-    prompt: "Test the implementation for security vulnerabilities and edge cases.",
-  },
-};
+// ── Display Name Helper ──────────────────────────
 
+function displayName(name: string): string {
+	return name.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+// ── Teams YAML Parser ────────────────────────────
+
+function parseTeamsYaml(raw: string): Record<string, string[]> {
+	const teams: Record<string, string[]> = {};
+	let current: string | null = null;
+	for (const line of raw.split("\n")) {
+		const teamMatch = line.match(/^(\S[^:]*):$/);
+		if (teamMatch) {
+			current = teamMatch[1].trim();
+			teams[current] = [];
+			continue;
+		}
+		const itemMatch = line.match(/^\s+-\s+(.+)$/);
+		if (itemMatch && current) {
+			teams[current].push(itemMatch[1].trim());
+		}
+	}
+	return teams;
+}
+
+
+
+// ── Frontmatter Parser ───────────────────────────
+
+function parseAgentFile(filePath: string): AgentDef | null {
+	try {
+		const raw = readFileSync(filePath, "utf-8");
+		const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+		if (!match) return null;
+
+		const frontmatter: Record<string, string> = {};
+		for (const line of match[1].split("\n")) {
+			const idx = line.indexOf(":");
+			if (idx > 0) {
+				frontmatter[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+			}
+		}
+		
+		
+		
+		
 const registerTool = (pi: ExtensionAPI) => pi.registerTool;
 const registerCommand = (pi: ExtensionAPI) => pi.registerCommand;
 const newTree = (pi: ExtensionAPI) => pi.ui?.newTree;
@@ -366,9 +389,6 @@ registerTool({
           isVirtualRootChild: false,
         };
         flatNodes.push(node);
-        if (children.length > 1) {
-          node.children.push(node);
-        }
       }
     }
 

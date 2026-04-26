@@ -1,914 +1,838 @@
 /**
- * agent-team.ts — Multi-agent team with full tree view and switching capabilities
+ * Agent Team — Dispatcher-only orchestrator with grid dashboard
  *
- * A complete extension that implements a full agent team with:
- * - Tree UI view showing all 6 agents with proper icons and descriptions
- * - Functional actions for each agent (run, inspect, toggle, etc.)
- * - Support for switching between active agents
- * - Proper state management and event handling
+ * The primary Pi agent has NO codebase tools. It can ONLY delegate work
+ * to specialist agents via the `dispatch_agent` tool. Each specialist
+ * maintains its own Pi session for cross-invocation memory.
+ *
+ * Loads agent definitions from agents/*.md, .claude/agents/*.md, .pi/agents/*.md.
+ * Teams are defined in .pi/agents/teams.yaml — on boot a select dialog lets
+ * you pick which team to work with. Only team members are available for dispatch.
+ *
+ * Commands:
+ *   /agents-team          — switch active team
+ *   /agents-list          — list loaded agents
+ *   /agents-grid N        — set column count (default 2)
  *
  * Usage: pi -e extensions/agent-team.ts
- *
- * @license MIT
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+import {
+  Text,
+  type AutocompleteItem,
+  truncateToWidth,
+  visibleWidth,
+} from "@mariozechner/pi-tui";
+import { spawn } from "child_process";
+import {
+  readdirSync,
+  readFileSync,
+  existsSync,
+  mkdirSync,
+  unlinkSync,
+} from "fs";
+import { join, resolve } from "path";
+import { applyExtensionDefaults } from "./themeMap.ts";
 
-interface Agent {
-  id: string;
+import type { AgentDetails } from "./ui/agent-widget.ts";
+
+// ── Types ────────────────────────────────────────
+
+interface AgentDef {
   name: string;
-  role: string;
   description: string;
-  icon: string;
-  active: boolean;
-  status: "idle" | "running" | "done" | "error";
-  output?: string;
+  tools: string;
+  systemPrompt: string;
+  file: string;
 }
 
-interface TeamState {
-  agents: Agent[];
-  activeAgentId: string | null;
-  switchMode: "idle" | "running";
-  lastAction: string | null;
+export type { AgentDetails } from "./ui/agent-widget.ts";
+
+// ── Display Name Helper ──────────────────────────
+
+function displayName(name: string): string {
+  return name
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 }
 
-/**
- * Team configuration for all agents
- */
-const TEAM_CONFIG: {
-  [key: string]: {
-    role: string;
-    description: string;
-    icon: string;
-    prompt: string;
-  };
-} = {
-  scout: {
-    role: "Scout",
-    description: "Explore the codebase and gather initial information",
-    icon: "🔍",
-    prompt: "Scan and explore the codebase to understand the project structure, dependencies, and entry points.",
-  },
-  planner: {
-    role: "Planner",
-    description: "Architect and plan the implementation strategy",
-    icon: "🏗️",
-    prompt: "Plan the architecture and implementation strategy for the task.",
-  },
-  builder: {
-    role: "Builder",
-    description: "Implement the planned solution with coding",
-    icon: "🔨",
-    prompt: "Implement the planned solution. Write code, run tests, and build artifacts.",
-  },
-  reviewer: {
-    role: "Reviewer",
-    description: "Review and validate the implementation",
-    icon: "📋",
-    prompt: "Review the implementation for correctness, efficiency, and best practices.",
-  },
-  documenter: {
-    role: "Documenter",
-    description: "Document the solution and create relevant artifacts",
-    icon: "📝",
-    prompt: "Document the implementation and create relevant documentation.",
-  },
-  "red-team": {
-    role: "Red Team",
-    description: "Perform security and adversarial testing",
-    icon: "⚠️",
-    prompt: "Test the implementation for security vulnerabilities and edge cases.",
-  },
-};
+// ── Teams YAML Parser ────────────────────────────
 
-const registerTool = (pi: ExtensionAPI) => pi.registerTool;
-const registerCommand = (pi: ExtensionAPI) => pi.registerCommand;
-const newTree = (pi: ExtensionAPI) => pi.ui?.newTree;
-const newText = (pi: ExtensionAPI) => pi.ui?.newText;
-
-let state: TeamState = {
-  agents: Object.entries(TEAM_CONFIG).map(([id, config]) => ({
-    id,
-    name: config.role,
-    role: config.role,
-    description: config.description,
-    icon: config.icon,
-    active: id === "scout", // Scout starts active
-    status: "idle",
-    output: "",
-  })),
-  activeAgentId: "scout",
-  switchMode: "idle",
-  lastAction: null,
-};
-
-/**
- * Reconstruct state from persistence (if available)
- */
-function reconstructState(ctx: any) {
-  try {
-    const persisted = ctx.storage?.get("agent-team-state");
-    if (persisted) {
-      const parsed = JSON.parse(persisted);
-      // Merge persisted state with current config
-      state = {
-        ...state,
-        agents: parsed.agents.map((a: any) => ({
-          ...a,
-          ...TEAM_CONFIG[a.id],
-        })),
-        activeAgentId: parsed.activeAgentId || "scout",
-      };
+function parseTeamsYaml(raw: string): Record<string, string[]> {
+  const teams: Record<string, string[]> = {};
+  let current: string | null = null;
+  for (const line of raw.split("\n")) {
+    const teamMatch = line.match(/^(\S[^:]*):$/);
+    if (teamMatch) {
+      current = teamMatch[1].trim();
+      teams[current] = [];
+      continue;
     }
-  } catch {
-    // Ignore persistence errors
-  }
-}
-
-/**
- * Persist state to storage
- */
-function persistState() {
-  try {
-    if (pi.ctx?.storage) {
-      pi.ctx.storage.set("agent-team-state", JSON.stringify(state));
+    const itemMatch = line.match(/^\s+-\s+(.+)$/);
+    if (itemMatch && current) {
+      teams[current].push(itemMatch[1].trim());
     }
-  } catch {
-    // Ignore persistence errors
   }
+  return teams;
 }
 
-/**
- * Get agent description by agent ID
- */
-function getAgentDescription(agentId: string): string {
-  const config = TEAM_CONFIG[agentId];
-  return config
-    ? `${config.icon} ${config.role}: ${config.description}`
-    : "Unknown agent";
-}
+// ── Frontmatter Parser ───────────────────────────
 
-/**
- * Get agent prompt by agent ID
- */
-function getAgentPrompt(agentId: string): string {
-  const config = TEAM_CONFIG[agentId];
-  return config ? config.prompt : "";
-}
+function parseAgentFile(filePath: string): AgentDef | null {
+  try {
+    const raw = readFileSync(filePath, "utf-8");
+    const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+    if (!match) return null;
 
-/**
- * Run a specific agent with a task
- */
-async function runAgent(agentId: string, task: string): Promise<string> {
-  const agent = state.agents.find((a) => a.id === agentId);
-  if (!agent) {
-    return `Agent ${agentId} not found.`;
-  }
-
-  // Update agent status to running
-  agent.status = "running";
-  agent.output = `Starting ${agent.role}...\n\n${task}\n\n`;
-  persistState();
-
-  // Simulate async work (in real implementation, this would call the agent)
-  const delay = 1000;
-  await new Promise((resolve) => setTimeout(resolve, delay));
-
-  agent.status = "done";
-  agent.output += `Completed: Task executed by ${agent.role}.\n\n`;
-  agent.output += `This is where the actual agent execution would happen, generating the agent's response and actions.`;
-
-  persistState();
-
-  return agent.output || "";
-}
-
-// ── /team Tool ──
-
-registerTool({
-  name: "/team",
-  label: "Team",
-  description:
-    "View the agent team structure and status. Shows all agents in a tree view with their roles, statuses, and actions.",
-  parameters: Type.Object({
-    mode: Type.Union([Type.Literal("full"), Type.Literal("compact")]),
-    action: Type.Union([
-      Type.Literal("run"),
-      Type.Literal("inspect"),
-      Type.Literal("toggle"),
-      Type.Literal("clear"),
-      Type.Optional(),
-    ]),
-    agentId: Type.Optional(Type.String()),
-  }),
-  async execute(_toolCallId, params, _signal, onUpdate, ctx) {
-    const mode = (params as any).mode || "full";
-    const action = (params as any).action;
-    const agentId = (params as any).agentId;
-
-    let content: Array<{ type: string; text: string }> = [];
-    let details: any = {};
-
-    if (action === "run" && agentId) {
-      const agent = state.agents.find((a) => a.id === agentId);
-      if (!agent) {
-        return {
-          content: [{ type: "text", text: `Agent ${agentId} not found.` }],
-          details: { error: `Agent ${agentId} not found.` },
-        };
+    const frontmatter: Record<string, string> = {};
+    for (const line of match[1].split("\n")) {
+      const idx = line.indexOf(":");
+      if (idx > 0) {
+        frontmatter[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
       }
+    }
 
-      const task = (ctx?.input || "").trim();
-      if (!task) {
+    if (!frontmatter.name) return null;
+
+    return {
+      name: frontmatter.name,
+      description: frontmatter.description || "",
+      tools: frontmatter.tools || "read,grep,find,ls",
+      systemPrompt: match[2].trim(),
+      file: filePath,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function scanAgentDirs(cwd: string): AgentDef[] {
+  const dirs = [
+    join(cwd, "agents"),
+    join(cwd, ".claude", "agents"),
+    join(cwd, ".pi", "agents"),
+  ];
+
+  const agents: AgentDef[] = [];
+  const seen = new Set<string>();
+
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    try {
+      for (const file of readdirSync(dir)) {
+        if (!file.endsWith(".md")) continue;
+        const fullPath = resolve(dir, file);
+        const def = parseAgentFile(fullPath);
+        if (def && !seen.has(def.name.toLowerCase())) {
+          seen.add(def.name.toLowerCase());
+          agents.push(def);
+        }
+      }
+    } catch {}
+  }
+
+  return agents;
+}
+
+// ── Extension ────────────────────────────────────
+
+export default function (pi: ExtensionAPI) {
+  const agentStates: Map<string, AgentState> = new Map();
+  let allAgentDefs: AgentDef[] = [];
+  let teams: Record<string, string[]> = {};
+  let activeTeamName = "";
+  let gridCols = 2;
+  let widgetCtx: any;
+  let sessionDir = "";
+  let contextWindow = 0;
+
+  function loadAgents(cwd: string) {
+    // Create session storage dir
+    sessionDir = join(cwd, ".pi", "agent-sessions");
+    if (!existsSync(sessionDir)) {
+      mkdirSync(sessionDir, { recursive: true });
+    }
+
+    // Load all agent definitions
+    allAgentDefs = scanAgentDirs(cwd);
+
+    // Load teams from .pi/agents/teams.yaml
+    const teamsPath = join(cwd, ".pi", "agents", "teams.yaml");
+    if (existsSync(teamsPath)) {
+      try {
+        teams = parseTeamsYaml(readFileSync(teamsPath, "utf-8"));
+      } catch {
+        teams = {};
+      }
+    } else {
+      teams = {};
+    }
+
+    // If no teams defined, create a default "all" team
+    if (Object.keys(teams).length === 0) {
+      teams = { all: allAgentDefs.map((d) => d.name) };
+    }
+  }
+
+  function activateTeam(teamName: string) {
+    activeTeamName = teamName;
+    const members = teams[teamName] || [];
+    const defsByName = new Map(
+      allAgentDefs.map((d) => [d.name.toLowerCase(), d]),
+    );
+
+    agentStates.clear();
+    for (const member of members) {
+      const def = defsByName.get(member.toLowerCase());
+      if (!def) continue;
+      const key = def.name.toLowerCase().replace(/\s+/g, "-");
+      const sessionFile = join(sessionDir, `${key}.json`);
+      const agentDetails: AgentDetails = {
+        id: key,
+        type: "custom",
+        status: "idle",
+        description: def.description,
+        tools: def.tools,
+        systemPrompt: def.systemPrompt,
+        file: def.file,
+        toolUses: 0,
+        tokens: "",
+        startedAt: 0,
+        completedAt: 0,
+        error: undefined,
+        turnCount: 0,
+        maxTurns: undefined,
+        sessionFile: existsSync(sessionFile) ? sessionFile : null,
+        runCount: 0,
+      };
+      agentStates.set(key, agentDetails);
+    }
+
+    // Auto-size grid columns based on team size
+    const size = agentStates.size;
+    gridCols = size <= 3 ? size : size === 4 ? 2 : 3;
+  }
+
+  // ── Grid Rendering ───────────────────────────
+
+  function renderCard(
+    state: AgentDetails,
+    colWidth: number,
+    theme: any,
+  ): string[] {
+    const w = colWidth - 2;
+    const truncate = (s: string, max: number) =>
+      s.length > max ? s.slice(0, max - 3) + "..." : s;
+
+    const statusColor =
+      state.status === "idle"
+        ? "dim"
+        : state.status === "running"
+          ? "accent"
+          : state.status === "completed"
+            ? "success"
+            : "error";
+    const statusIcon =
+      state.status === "idle"
+        ? "○"
+        : state.status === "running"
+          ? "●"
+          : state.status === "completed"
+            ? "✓"
+            : "✗";
+
+    const name = displayName(state.id);
+    const nameStr = theme.fg("accent", theme.bold(truncate(name, w)));
+    const nameVisible = Math.min(name.length, w);
+
+    const statusStr = `${statusIcon} ${state.status}`;
+    const timeStr =
+      state.status !== "idle"
+        ? ` ${formatDuration(state.startedAt, state.completedAt)}`
+        : "";
+    const statusLine = theme.fg(statusColor, statusStr + timeStr);
+    const statusVisible = statusStr.length + timeStr.length;
+
+    // Context bar: 5 blocks + percent
+    const filled = Math.ceil(state.contextPct / 20);
+    const bar = "#".repeat(filled) + "-".repeat(5 - filled);
+    const ctxStr = `[${bar}] ${Math.ceil(state.contextPct)}%`;
+    const ctxLine = theme.fg("dim", ctxStr);
+    const ctxVisible = ctxStr.length;
+
+    const workRaw = state.task
+      ? state.activity || state.lastWork || state.task
+      : state.description;
+    const workText = truncate(workRaw, Math.min(50, w - 1));
+    const workLine = theme.fg("muted", workText);
+    const workVisible = workText.length;
+
+    const top = "┌" + "─".repeat(w) + "┐";
+    const bot = "└" + "─".repeat(w) + "┘";
+    const border = (content: string, visLen: number) =>
+      theme.fg("dim", "│") +
+      content +
+      " ".repeat(Math.max(0, w - visLen)) +
+      theme.fg("dim", "│");
+
+    return [
+      theme.fg("dim", top),
+      border(" " + nameStr, 1 + nameVisible),
+      border(" " + statusLine, 1 + statusVisible),
+      border(" " + ctxLine, 1 + ctxVisible),
+      border(" " + workLine, 1 + workVisible),
+      theme.fg("dim", bot),
+    ];
+  }
+
+  function updateWidget() {
+    if (!widgetCtx) return;
+
+    widgetCtx.ui.setWidget("agent-team", (_tui: any, theme: any) => {
+      const text = new Text("", 0, 1);
+
+      return {
+        render(width: number): string[] {
+          if (agentStates.size === 0) {
+            text.setText(
+              theme.fg("dim", "No agents found. Add .md files to agents/"),
+            );
+            return text.render(width);
+          }
+
+          const cols = Math.min(gridCols, agentStates.size);
+          const gap = 1;
+          const colWidth = Math.floor((width - gap * (cols - 1)) / cols);
+          const agents = Array.from(agentStates.values());
+          const rows: string[][] = [];
+
+          for (let i = 0; i < agents.length; i += cols) {
+            const rowAgents = agents.slice(i, i + cols);
+            const cards = rowAgents.map((a) => renderCard(a, colWidth, theme));
+
+            while (cards.length < cols) {
+              cards.push(Array(6).fill(" ".repeat(colWidth)));
+            }
+
+            const cardHeight = cards[0].length;
+            for (let line = 0; line < cardHeight; line++) {
+              rows.push(cards.map((card) => card[line] || ""));
+            }
+          }
+
+          const output = rows.map((cols) => cols.join(" ".repeat(gap)));
+          text.setText(output.join("\n"));
+          return text.render(width);
+        },
+        invalidate() {
+          text.invalidate();
+        },
+      };
+    });
+  }
+
+  // ── Dispatch Agent (returns Promise) ─────────
+
+  function dispatchAgent(
+    agentName: string,
+    task: string,
+    ctx: any,
+  ): Promise<{ output: string; exitCode: number; elapsed: number }> {
+    const key = agentName.toLowerCase();
+    const state = agentStates.get(key);
+    if (!state) {
+      return Promise.resolve({
+        output: `Agent "${agentName}" not found. Available: ${Array.from(
+          agentStates.values(),
+        )
+          .map((s) => displayName(s.def.name))
+          .join(", ")}`,
+        exitCode: 1,
+        elapsed: 0,
+      });
+    }
+
+    if (state.status === "running") {
+      return Promise.resolve({
+        output: `Agent "${displayName(state.def.name)}" is already running. Wait for it to finish.`,
+        exitCode: 1,
+        elapsed: 0,
+      });
+    }
+
+    state.status = "running";
+    state.task = task;
+    state.toolCount = 0;
+    state.elapsed = 0;
+    state.lastWork = "";
+    state.runCount++;
+    updateWidget();
+
+    const startTime = Date.now();
+    state.timer = setInterval(() => {
+      state.elapsed = Date.now() - startTime;
+      updateWidget();
+    }, 1000);
+
+    const model = ctx.model
+      ? `${ctx.model.provider}/${ctx.model.id}`
+      : "openrouter/google/gemini-3-flash-preview";
+
+    // Session file for this agent
+    const agentKey = state.def.name.toLowerCase().replace(/\s+/g, "-");
+    const agentSessionFile = join(sessionDir, `${agentKey}.json`);
+
+    // Build args — first run creates session, subsequent runs resume
+    const args = [
+      "--mode",
+      "json",
+      "-p",
+      "--no-extensions",
+      "--model",
+      model,
+      "--tools",
+      state.def.tools,
+      "--thinking",
+      "off",
+      "--append-system-prompt",
+      state.def.systemPrompt,
+      "--session",
+      agentSessionFile,
+    ];
+
+    // Continue existing session if we have one
+    if (state.sessionFile) {
+      args.push("-c");
+    }
+
+    args.push(task);
+
+    const textChunks: string[] = [];
+
+    return new Promise((resolve) => {
+      const proc = spawn("pi", args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env },
+      });
+
+      let buffer = "";
+
+      proc.stdout!.setEncoding("utf-8");
+      proc.stdout!.on("data", (chunk: string) => {
+        buffer += chunk;
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const event = JSON.parse(line);
+            if (event.type === "message_update") {
+              const delta = event.assistantMessageEvent;
+              if (delta?.type === "text_delta") {
+                textChunks.push(delta.delta || "");
+                const full = textChunks.join("");
+                const last =
+                  full
+                    .split("\n")
+                    .filter((l: string) => l.trim())
+                    .pop() || "";
+                state.lastWork = last;
+                updateWidget();
+              }
+            } else if (event.type === "tool_execution_start") {
+              state.toolCount++;
+              updateWidget();
+            } else if (event.type === "message_end") {
+              const msg = event.message;
+              if (msg?.usage && contextWindow > 0) {
+                state.contextPct =
+                  ((msg.usage.input || 0) / contextWindow) * 100;
+                updateWidget();
+              }
+            } else if (event.type === "agent_end") {
+              const msgs = event.messages || [];
+              const last = [...msgs]
+                .reverse()
+                .find((m: any) => m.role === "assistant");
+              if (last?.usage && contextWindow > 0) {
+                state.contextPct =
+                  ((last.usage.input || 0) / contextWindow) * 100;
+                updateWidget();
+              }
+            }
+          } catch {}
+        }
+      });
+
+      proc.stderr!.setEncoding("utf-8");
+      proc.stderr!.on("data", () => {});
+
+      proc.on("close", (code) => {
+        if (buffer.trim()) {
+          try {
+            const event = JSON.parse(buffer);
+            if (event.type === "message_update") {
+              const delta = event.assistantMessageEvent;
+              if (delta?.type === "text_delta")
+                textChunks.push(delta.delta || "");
+            }
+          } catch {}
+        }
+
+        clearInterval(state.timer);
+        state.elapsed = Date.now() - startTime;
+        state.status = code === 0 ? "done" : "error";
+
+        // Mark session file as available for resume
+        if (code === 0) {
+          state.sessionFile = agentSessionFile;
+        }
+
+        const full = textChunks.join("");
+        state.lastWork =
+          full
+            .split("\n")
+            .filter((l: string) => l.trim())
+            .pop() || "";
+        updateWidget();
+
+        ctx.ui.notify(
+          `${displayName(state.def.name)} ${state.status} in ${Math.round(state.elapsed / 1000)}s`,
+          state.status === "done" ? "success" : "error",
+        );
+
+        resolve({
+          output: full,
+          exitCode: code ?? 1,
+          elapsed: state.elapsed,
+        });
+      });
+
+      proc.on("error", (err) => {
+        clearInterval(state.timer);
+        state.status = "error";
+        state.lastWork = `Error: ${err.message}`;
+        updateWidget();
+        resolve({
+          output: `Error spawning agent: ${err.message}`,
+          exitCode: 1,
+          elapsed: Date.now() - startTime,
+        });
+      });
+    });
+  }
+
+  // ── dispatch_agent Tool (registered at top level) ──
+
+  pi.registerTool({
+    name: "dispatch_agent",
+    label: "Dispatch Agent",
+    description:
+      "Dispatch a task to a specialist agent. The agent will execute the task and return the result. Use the system prompt to see available agent names.",
+    parameters: Type.Object({
+      agent: Type.String({ description: "Agent name (case-insensitive)" }),
+      task: Type.String({
+        description: "Task description for the agent to execute",
+      }),
+    }),
+
+    async execute(_toolCallId, params, _signal, onUpdate, ctx) {
+      const { agent, task } = params as { agent: string; task: string };
+
+      try {
+        if (onUpdate) {
+          onUpdate({
+            content: [{ type: "text", text: `Dispatching to ${agent}...` }],
+            details: { agent, task, status: "dispatching" },
+          });
+        }
+
+        const result = await dispatchAgent(agent, task, ctx);
+
+        const truncated =
+          result.output.length > 8000
+            ? result.output.slice(0, 8000) + "\n\n... [truncated]"
+            : result.output;
+
+        const status = result.exitCode === 0 ? "done" : "error";
+        const summary = `[${agent}] ${status} in ${Math.round(result.elapsed / 1000)}s`;
+
+        return {
+          content: [{ type: "text", text: `${summary}\n\n${truncated}` }],
+          details: {
+            agent,
+            task,
+            status,
+            elapsed: result.elapsed,
+            exitCode: result.exitCode,
+            fullOutput: result.output,
+          },
+        };
+      } catch (err: any) {
         return {
           content: [
             {
               type: "text",
-              text: `Please provide a task for ${agent.role}. Use /team to run the team.`,
+              text: `Error dispatching to ${agent}: ${err?.message || err}`,
             },
           ],
-          details: { error: "No task provided." },
+          details: {
+            agent,
+            task,
+            status: "error",
+            elapsed: 0,
+            exitCode: 1,
+            fullOutput: "",
+          },
         };
       }
+    },
 
-      // Update agent status
-      agent.status = "running";
-      agent.output = `Running ${agent.role}...\n\n${task}\n\n`;
-
-      // Simulate async work (in real implementation, this would call the agent)
-      const delay = 1000;
-      await new Promise((resolve) => setTimeout(resolve, delay));
-
-      agent.status = "done";
-      agent.output += `Completed: Task executed by ${agent.role}.\n\n`;
-      agent.output += `This is where the actual agent execution would happen, generating the agent's response and actions.`;
-
-      persistState();
-
-      return {
-        content: [{ type: "text", text: agent.output || "" }],
-        details: {
-          agent: agentId,
-          role: agent.role,
-          status: agent.status,
-        },
-      };
-    }
-
-    if (action === "inspect" && agentId) {
-      const agent = state.agents.find((a) => a.id === agentId);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Agent: ${agent?.id || agentId}\nRole: ${agent?.role || "Unknown"}\nStatus: ${agent?.status || "Unknown"}\nDescription: ${agent?.description || "Unknown"}`,
-          },
-        ],
-        details: {
-          agent: agentId,
-          role: agent?.role,
-          status: agent?.status,
-        },
-      };
-    }
-
-    if (action === "toggle" && agentId) {
-      const agent = state.agents.find((a) => a.id === agentId);
-      if (agent) {
-        agent.active = !agent.active;
-        persistState();
-      }
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${agentId} ${agent?.active ? "deactivated" : "activated"}`,
-          },
-        ],
-        details: {
-          agent: agentId,
-          active: agent?.active,
-        },
-      };
-    }
-
-    if (action === "clear") {
-      state.agents.forEach((agent) => {
-        agent.status = "idle";
-        agent.output = "";
-      });
-      persistState();
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Team state cleared. All agents reset to idle.",
-          },
-        ],
-        details: { cleared: true },
-      };
-    }
-
-    // Default: Render team tree
-    const activeAgent = state.agents.find(
-      (a) => a.id === state.activeAgentId,
-    );
-    const activeStatus = activeAgent
-      ? activeAgent.status === "running"
-        ? "●"
-        : activeAgent.active
-          ? "○"
-          : "○"
-      : "";
-    const activeName = activeAgent ? activeAgent.role : "No Agent";
-
-    // Build team tree structure
-    const roots = [
-      {
-        entry: {
-          id: "root",
-          label: `${activeStatus} Team: full`,
-          children: [
-            ...state.agents.map((agent) => ({
-              id: `agent:${agent.id}`,
-              label: `${agent.icon} ${agent.role}`,
-              description: agent.description,
-              status: agent.status,
-              active: agent.active,
-            })),
-          ],
-        },
-        label: activeName,
-      };
-    ];
-
-    // Flatten for tree UI rendering
-    const flatNodes = [];
-    for (const root of roots) {
-      const { entry, children } = root;
-      const parent = {
-        node: entry,
-        parent: null,
-        children: [...children],
-        label: entry.label,
-        depth: 0,
-        isVirtualRootChild: true,
-      };
-      flatNodes.push(parent);
-
-      for (const child of children) {
-        const node = {
-          node: child,
-          parent: parent.node,
-          children: [],
-          label: child.label,
-          depth: 1,
-          isVirtualRootChild: false,
-        };
-        flatNodes.push(node);
-        if (children.length > 1) {
-          node.children.push(node);
-        }
-      }
-    }
-
-    // Create tree nodes for UI
-    const treeNodes: Array<{
-      id: string;
-      label: string;
-      description?: string;
-      depth: number;
-      children: Array<{ id: string; label: string; depth: number }>;
-      status: string;
-      active: boolean;
-    }> = flatNodes.map(({ node, depth, children, status, active }) => ({
-      id: node.id,
-      label: node.label,
-      description: node.description,
-      depth,
-      children: children.map((c) => ({
-        id: c.id,
-        label: c.label,
-        depth: c.depth,
-      })),
-      status,
-      active,
-    }));
-
-    // Add agent-specific actions
-    const actions = [
-      "run",
-      "inspect",
-      "toggle",
-      "clear",
-      "status",
-      "logs",
-      "history",
-      "restart",
-    ];
-
-    return {
-      content: [{ type: "text", text: "" }],
-      details: {
-        roots,
-        flatNodes,
-        treeNodes,
-        actions,
-        activeAgentId: state.activeAgentId,
-        lastAction: state.lastAction,
-      },
-    };
-  },
-  renderCall(_args, theme) {
-    const text =
-      theme.fg("toolTitle", theme.bold("/team ")) +
-      theme.fg("muted", " — Agent team view");
-    return new Text(text, 0, 0);
-  },
-  renderResult(result, options, theme) {
-    const details = result.details as any;
-    if (!details) {
-      return new Text(theme.fg("error", "Error rendering team"), 0, 0);
-    }
-
-    if (options.isPartial) {
+    renderCall(args, theme) {
+      const agentName = (args as any).agent || "?";
+      const task = (args as any).task || "";
+      const preview = task.length > 60 ? task.slice(0, 57) + "..." : task;
       return new Text(
-        theme.fg("accent", "Team view updating...") + theme.fg("dim", " "),
+        theme.fg("toolTitle", theme.bold("dispatch_agent ")) +
+          theme.fg("accent", agentName) +
+          theme.fg("dim", " — ") +
+          theme.fg("muted", preview),
         0,
         0,
       );
-    }
+    },
 
-    // Show team tree with actions
-    const tree = new Tree(details.treeNodes || [], options, theme, {
-      onNodeSelected: async (nodeId) => {
-        if (nodeId.startsWith("agent:")) {
-          const agentId = nodeId.replace("agent:", "");
-          // Update the active agent
-          const agent = state.agents.find((a) => a.id === agentId);
-          if (agent) {
-            state.activeAgentId = agentId;
-            persistState();
-          }
+    renderResult(result, options, theme) {
+      const details = result.details as any;
+      if (!details) {
+        const text = result.content[0];
+        return new Text(text?.type === "text" ? text.text : "", 0, 0);
+      }
+
+      // Streaming/partial result while agent is still running
+      if (options.isPartial || details.status === "dispatching") {
+        return new Text(
+          theme.fg("accent", `● ${details.agent || "?"}`) +
+            theme.fg("dim", " working..."),
+          0,
+          0,
+        );
+      }
+
+      const icon = details.status === "done" ? "✓" : "✗";
+      const color = details.status === "done" ? "success" : "error";
+      const elapsed =
+        typeof details.elapsed === "number"
+          ? Math.round(details.elapsed / 1000)
+          : 0;
+      const header =
+        theme.fg(color, `${icon} ${details.agent}`) +
+        theme.fg("dim", ` ${elapsed}s`);
+
+      if (options.expanded && details.fullOutput) {
+        const output =
+          details.fullOutput.length > 4000
+            ? details.fullOutput.slice(0, 4000) + "\n... [truncated]"
+            : details.fullOutput;
+        return new Text(header + "\n" + theme.fg("muted", output), 0, 0);
+      }
+
+      return new Text(header, 0, 0);
+    },
+  });
+
+  // ── Commands ─────────────────────────────────
+
+  pi.registerCommand("agents-team", {
+    description: "Select a team to work with",
+    handler: async (_args, ctx) => {
+      widgetCtx = ctx;
+      const teamNames = Object.keys(teams);
+      if (teamNames.length === 0) {
+        ctx.ui.notify("No teams defined in .pi/agents/teams.yaml", "warning");
+        return;
+      }
+
+      const options = teamNames.map((name) => {
+        const members = teams[name].map((m) => displayName(m));
+        return `${name} — ${members.join(", ")}`;
+      });
+
+      const choice = await ctx.ui.select("Select Team", options);
+      if (choice === undefined) return;
+
+      const idx = options.indexOf(choice);
+      const name = teamNames[idx];
+      activateTeam(name);
+      updateWidget();
+      ctx.ui.setStatus("agent-team", `Team: ${name} (${agentStates.size})`);
+      ctx.ui.notify(
+        `Team: ${name} — ${Array.from(agentStates.values())
+          .map((s) => displayName(s.def.name))
+          .join(", ")}`,
+        "info",
+      );
+    },
+  });
+
+  pi.registerCommand("agents-list", {
+    description: "List all loaded agents",
+    handler: async (_args, _ctx) => {
+      widgetCtx = _ctx;
+      const names = Array.from(agentStates.values())
+        .map((s) => {
+          const session = s.sessionFile ? "resumed" : "new";
+          return `${displayName(s.def.name)} (${s.status}, ${session}, runs: ${s.runCount}): ${s.def.description}`;
+        })
+        .join("\n");
+      _ctx.ui.notify(names || "No agents loaded", "info");
+    },
+  });
+
+  pi.registerCommand("agents-grid", {
+    description: "Set grid columns: /agents-grid <1-6>",
+    getArgumentCompletions: (prefix: string): AutocompleteItem[] | null => {
+      const items = ["1", "2", "3", "4", "5", "6"].map((n) => ({
+        value: n,
+        label: `${n} columns`,
+      }));
+      const filtered = items.filter((i) => i.value.startsWith(prefix));
+      return filtered.length > 0 ? filtered : items;
+    },
+    handler: async (args, _ctx) => {
+      widgetCtx = _ctx;
+      const n = parseInt(args?.trim() || "", 10);
+      if (n >= 1 && n <= 6) {
+        gridCols = n;
+        _ctx.ui.notify(`Grid set to ${gridCols} columns`, "info");
+        updateWidget();
+      } else {
+        _ctx.ui.notify("Usage: /agents-grid <1-6>", "error");
+      }
+    },
+  });
+
+  // ── System Prompt Override ───────────────────
+
+  pi.on("before_agent_start", async (_event, _ctx) => {
+    // Build dynamic agent catalog from active team only
+    const agentCatalog = Array.from(agentStates.values())
+      .map(
+        (s) =>
+          `### ${displayName(s.def.name)}\n**Dispatch as:** \`${s.def.name}\`\n${s.def.description}\n**Tools:** ${s.def.tools}`,
+      )
+      .join("\n\n");
+
+    const teamMembers = Array.from(agentStates.values())
+      .map((s) => displayName(s.def.name))
+      .join(", ");
+
+    return {
+      systemPrompt: `You are a dispatcher agent. You coordinate specialist agents to accomplish tasks.
+You do NOT have direct access to the codebase. You MUST delegate all work through
+agents using the dispatch_agent tool.
+
+## Active Team: ${activeTeamName}
+Members: ${teamMembers}
+You can ONLY dispatch to agents listed below. Do not attempt to dispatch to agents outside this team.
+
+## How to Work
+- Analyze the user's request and break it into clear sub-tasks
+- Choose the right agent(s) for each sub-task
+- Dispatch tasks using the dispatch_agent tool
+- Review results and dispatch follow-up agents if needed
+- If a task fails, try a different agent or adjust the task description
+- Summarize the outcome for the user
+
+## Rules
+- NEVER try to read, write, or execute code directly — you have no such tools
+- ALWAYS use dispatch_agent to get work done
+- You can chain agents: use scout to explore, then builder to implement
+- You can dispatch the same agent multiple times with different tasks
+- Keep tasks focused — one clear objective per dispatch
+
+## Agents
+
+${agentCatalog}`,
+    };
+  });
+
+  // ── Session Start ────────────────────────────
+
+  pi.on("session_start", async (_event, _ctx) => {
+    applyExtensionDefaults(import.meta.url, _ctx);
+    // Clear widgets from previous session
+    if (widgetCtx) {
+      widgetCtx.ui.setWidget("agent-team", undefined);
+    }
+    widgetCtx = _ctx;
+    contextWindow = _ctx.model?.contextWindow || 0;
+
+    // Wipe old agent session files so subagents start fresh
+    const sessDir = join(_ctx.cwd, ".pi", "agent-sessions");
+    if (existsSync(sessDir)) {
+      for (const f of readdirSync(sessDir)) {
+        if (f.endsWith(".json")) {
+          try {
+            unlinkSync(join(sessDir, f));
+          } catch {}
         }
-      },
-      onNodeClicked: async (nodeId, event) => {
-        const action = event?.button === 2 ? "inspect" : "run";
-        if (nodeId.startsWith("agent:")) {
-          const agentId = nodeId.replace("agent:", "");
-          await runAgent(agentId, "");
-        }
-      },
-    });
-
-    return tree;
-  },
-});
-
-// ── /team run <agentId> Tool ──
-
-registerTool({
-  name: "/team run",
-  label: "Run Agent",
-  description:
-    "Run a specific agent in the team. Provide the agent ID (scout, planner, builder, reviewer, documenter, red-team) and a task.",
-  parameters: Type.Object({
-    agentId: Type.String({
-      description:
-        "ID of agent to run (scout, planner, builder, reviewer, documenter, red-team)",
-    }),
-    task: Type.String({
-      description: "Task to execute with the agent",
-    }),
-  }),
-  async execute(_toolCallId, params, _signal, onUpdate, ctx) {
-    const { agentId, task } = params as { agentId: string; task: string };
-    const agent = state.agents.find((a) => a.id === agentId);
-
-    if (!agent) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Unknown agent: ${agentId}. Valid agents: ${Object.keys(TEAM_CONFIG).join(", ")}`,
-          },
-        ],
-        details: { error: `Unknown agent: ${agentId}` },
-      };
+      }
     }
 
-    onUpdate?.({
-      content: [{ type: "text", text: `Running ${agent.role}...` }],
-      details: { agent: agentId, task, status: "running" },
-    });
+    loadAgents(_ctx.cwd);
 
-    // Execute agent
-    const result = await runAgent(agentId, task);
-
-    agent.status = "done";
-    persistState();
-
-    return {
-      content: [{ type: "text", text: result }],
-      details: {
-        agent: agentId,
-        role: agent.role,
-        task,
-        status: "done",
-      },
-    };
-  },
-  renderCall(args, theme) {
-    const agentId = (args as any).agentId || "";
-    const agent = state.agents.find((a) => a.id === agentId);
-    const label =
-      theme.fg("toolTitle", theme.bold("/team run ")) +
-      theme.fg("accent", agent?.role || "?");
-    return new Text(label, 0, 0);
-  },
-  renderResult(result, options, theme) {
-    const details = result.details as any;
-    if (!details) {
-      return new Text(result.content[0]?.text || "", 0, 0);
+    // Default to first team — use /agents-team to switch
+    const teamNames = Object.keys(teams);
+    if (teamNames.length > 0) {
+      activateTeam(teamNames[0]);
     }
 
-    const statusColor =
-      details.status === "running"
-        ? "accent"
-        : details.status === "done"
-          ? "success"
-          : "error";
+    // Lock down to dispatcher-only (tool already registered at top level)
+    pi.setActiveTools(["dispatch_agent"]);
 
-    const output = details.task
-      ? `\n\n${details.task.slice(0, 200)}${details.task.length > 200 ? "..." : ""}`
-      : "";
-
-    const header =
-      theme.fg(statusColor, `✓ ${details.role}`) +
-      theme.fg("dim", ` ${details.status}`);
-
-    return new Text(header + output, 0, 0);
-  },
-});
-
-// ── /team status Tool ──
-
-registerTool({
-  name: "/team status",
-  label: "Team Status",
-  description: "Show current status of all agents in the team.",
-  parameters: Type.Object({
-    agentId: Type.Optional(Type.String()),
-  }),
-  async execute(_toolCallId, params, _signal, onUpdate) {
-    const agentId = (params as any).agentId;
-    const agents = agentId
-      ? state.agents.find((a) => a.id === agentId)
-      : state.agents;
-
-    if (!agents) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Agent not found or team is empty.",
-          },
-        ],
-        details: { error: "Agent not found" },
-      };
-    }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: Array.isArray(agents)
-            ? "All agents:"
-            : `Agent ${agents.role}:`,
-        },
-      ],
-      details: {
-        agents: Array.isArray(agents) ? agents : [agents],
-      },
-    };
-  },
-  renderCall(_args, theme) {
-    return new Text(theme.fg("toolTitle", theme.bold("/team status")), 0, 0);
-  },
-  renderResult(result, options, theme) {
-    const agents = (result.details as any).agents || [];
-    const status = agents
-      .map((agent) => {
-        const icon =
-          agent.status === "running"
-            ? "●"
-            : agent.status === "done"
-              ? "✓"
-              : agent.active
-                ? "○"
-                : "○";
-        const statusColor =
-          agent.status === "running"
-            ? "accent"
-            : agent.status === "done"
-              ? "success"
-              : agent.active
-                ? "text"
-                : "muted";
-
-        return `${icon} ${agent.role.padEnd(12)} | ${agent.description}`;
-      })
-      .join("\n");
-
-    return new Text(status, 0, 0);
-  },
-});
-
-// ── /team logs Tool ──
-
-registerTool({
-  name: "/team logs",
-  label: "Team Logs",
-  description: "Show execution logs for all agents.",
-  parameters: Type.Object({
-    agentId: Type.Optional(Type.String()),
-  }),
-  async execute(_toolCallId, params, _signal) {
-    const agentId = (params as any).agentId;
-    const agents = agentId
-      ? state.agents.find((a) => a.id === agentId)
-      : state.agents;
-
-    if (!agents) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "No logs available or agent not found.",
-          },
-        ],
-        details: { logs: [] },
-      };
-    }
-
-    const logs = Array.isArray(agents)
-      ? agents
-        .filter((a) => a.output)
-        .map((agent) => ({
-          agent: agent.role,
-          output: agent.output || "(no output)",
-        }))
-      : agents.output
-        ? {
-            agent: agents.role,
-            output: agents.output || "(no output)",
-          }
-        : [];
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: logs.length ? "Agent logs:" : "No logs available.",
-        },
-      ],
-      details: { logs },
-    };
-  },
-  renderCall(_args, theme) {
-    return new Text(theme.fg("toolTitle", theme.bold("/team logs")), 0, 0);
-  },
-  renderResult(result, options, theme) {
-    const logs = (result.details as any).logs || [];
-    if (logs.length === 0) {
-      return new Text("No logs available.", 0, 0);
-    }
-
-    const logText = logs
-      .map((log) => `${log.agent.padEnd(12)} | ${log.output}`)
-      .join("\n");
-
-    return new Text(logText, 0, 0);
-  },
-});
-
-// ── /team restart Tool ──
-
-registerTool({
-  name: "/team restart",
-  label: "Restart Team",
-  description: "Reset all agents to idle state.",
-  parameters: Type.Object({
-    force: Type.Optional(Type.Boolean({ default: false })),
-  }),
-  async execute(_toolCallId, params, _signal) {
-    const force = (params as any).force || false;
-
-    if (!force) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Use /team restart --force to restart all agents.",
-          },
-        ],
-        details: { error: "Use --force flag" },
-      };
-    }
-
-    state.agents.forEach((agent) => {
-      agent.status = "idle";
-      agent.output = "";
-    });
-    persistState();
-
-    return {
-      content: [
-        { type: "text", text: "All agents restarted to idle state." },
-      ],
-      details: { restarted: true },
-    };
-  },
-  renderCall(_args, theme) {
-    return new Text(theme.fg("toolTitle", theme.bold("/team restart")), 0, 0);
-  },
-  renderResult(result, options, theme) {
-    const details = result.details as any;
-    if (details?.error) {
-      return new Text(theme.fg("error", result.content[0]?.text), 0, 0);
-    }
-    return new Text(theme.fg("success", "✓ All agents restarted"), 0, 0);
-  },
-});
-
-// ── /team history Tool ──
-
-registerTool({
-  name: "/team history",
-  label: "History",
-  description: "Show recent agent actions and history.",
-  async execute(_toolCallId, params, _signal) {
-    const history = [
-      {
-        action: "initialized",
-        agent: state.activeAgentId,
-        time: new Date().toISOString(),
-      },
-    ].filter((h) => !!h.agent);
-
-    return {
-      content: [
-        { type: "text", text: `History (${history.length} entries):` },
-      ],
-      details: { history },
-    };
-  },
-  renderCall(_args, theme) {
-    return new Text(theme.fg("toolTitle", theme.bold("/team history")), 0, 0);
-  },
-  renderResult(result, options, theme) {
-    const history = (result.details as any).history || [];
-    const text = history.map((h) => `• ${h.action}: ${h.agent}`).join("\n");
-    return new Text(text || "No history available.", 0, 0);
-  },
-});
-
-// ── /team switch <agentId> Tool ──
-
-registerTool({
-  name: "/team switch",
-  label: "Switch Agent",
-  description: "Switch to a different active agent in the team.",
-  parameters: Type.Object({
-    agentId: Type.String({
-      description: "ID of agent to switch to",
-    }),
-  }),
-  async execute(_toolCallId, params, _signal, onUpdate) {
-    const agentId = (params as any).agentId;
-    const agent = state.agents.find((a) => a.id === agentId);
-
-    if (!agent) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Unknown agent: ${agentId}. Valid agents: ${Object.keys(TEAM_CONFIG).join(", ")}`,
-          },
-        ],
-        details: { error: `Unknown agent: ${agentId}` },
-      };
-    }
-
-    state.activeAgentId = agentId;
-    state.lastAction = `switched to ${agentId}`;
-    persistState();
-
-    onUpdate?.({
-      content: [{ type: "text", text: `Switched to ${agent.role}` }],
-      details: { agent: agentId },
-    });
-
-    return {
-      content: [{ type: "text", text: `Now active agent: ${agent.role}` }],
-      details: {
-        activeAgentId: state.activeAgentId,
-        previousAgentId: state.agents.find(
-          (a) => a.id === state.activeAgentId,
-        )?.role,
-      },
-    };
-  },
-  renderCall(_args, theme) {
-    return new Text(theme.fg("toolTitle", theme.bold("/team switch")), 0, 0);
-  },
-  renderResult(result, options, theme) {
-    const details = result.details as any;
-    const current = details.activeAgentId || "unknown";
-    const previous = details.previousAgentId || "unknown";
-
-    return new Text(
-      theme.fg("accent", `Active agent changed: ${previous} → ${current}`),
-      0,
-      0,
+    _ctx.ui.setStatus(
+      "agent-team",
+      `Team: ${activeTeamName} (${agentStates.size})`,
     );
-  },
-});
-
-// ── Commands ──
-
-registerCommand("team", {
-  description: "List team agents and options",
-  handler: async (_args, ctx) => {
-    const options = Object.entries(TEAM_CONFIG).map(
-      ([id, config]) =>
-        `${config.icon} ${config.role.padEnd(12)} | ${config.description}`,
+    const members = Array.from(agentStates.values())
+      .map((s) => displayName(s.def.name))
+      .join(", ");
+    _ctx.ui.notify(
+      `Team: ${activeTeamName} (${members})\n` +
+        `Team sets loaded from: .pi/agents/teams.yaml\n\n` +
+        `/agents-team          Select a team\n` +
+        `/agents-list          List active agents and status\n` +
+        `/agents-grid <1-6>    Set grid column count`,
+      "info",
     );
+    updateWidget();
 
-    const usage =
-      `Usage: /team [options]
-  /team run <agentId> — Run a specific agent
-  /team status        — Show team status
-  /team logs          — Show agent logs
-  /team restart [—force] — Reset all agents
-  /team history       — Show action history
-  /team switch <agentId> — Switch active agent
-  /team clear         — Clear agent outputs
-  /team help          — Show this help
+    // Footer: model | team | context bar
+    _ctx.ui.setFooter((_tui, theme, _footerData) => ({
+      dispose: () => {},
+      invalidate() {},
+      render(width: number): string[] {
+        const model = _ctx.model?.id || "no-model";
+        const usage = _ctx.getContextUsage();
+        const pct = usage ? usage.percent : 0;
+        const filled = Math.round(pct / 10);
+        const bar = "#".repeat(filled) + "-".repeat(10 - filled);
 
-Available agents:
-` + options.join("\n");
+        const left =
+          theme.fg("dim", ` ${model}`) +
+          theme.fg("muted", " · ") +
+          theme.fg("accent", activeTeamName);
+        const right = theme.fg("dim", `[${bar}] ${Math.round(pct)}% `);
+        const pad = " ".repeat(
+          Math.max(1, width - visibleWidth(left) - visibleWidth(right)),
+        );
 
-    ctx.ui.notify(usage, "info");
-  },
-});
-
-registerCommand("agents", {
-  description: "Alias for /team",
-  handler: async () => {
-    ctx.ui.notify(
-      "Use /team command instead. /agents is deprecated.",
-      "warning",
-    );
-  },
-});
-
-// ── Event Handlers ──
-
-pi.on("session_switch", async (_event, ctx) => {
-  // Reconstruct state when session switches
-  reconstructState(ctx);
-});
-
-pi.on("session_fork", async (_event, ctx) => {
-  // Reconstruct state when session forks
-  reconstructState(ctx);
-});
-
-pi.on("session_tree", async (_event, ctx) => {
-  // Reconstruct state when tree branches
-  reconstructState(ctx);
-});
-
-// ── Initialization ──
-
-// Reconstruct initial state
-reconstructState(pi.ctx);
-
-// Persist initial state
-persistState();
-
-// ── Cleanup ──
-
-const dispose = () => {
-  // Clean up resources if any
-  persistState();
-};
-
-return {
-  name: "agent-team",
-  version: "2.0.0",
-  description:
-    "Multi-agent team with full tree view, switching, and functional actions for all 6 agents",
-  dispose,
-};
+        return [truncateToWidth(left + pad + right, width)];
+      },
+    }));
+  });
+}
