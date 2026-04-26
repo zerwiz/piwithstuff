@@ -269,7 +269,7 @@ export default function (pi: ExtensionAPI) {
   ): string[] {
     const frame = SPINNER[widgetFrame % SPINNER.length];
     const safeWidth = Math.max(10, width - 2); // Guaranteed anti-wrap margin
-    const maxActivityHeight = 8; // Max lines to show per agent
+    const fixedActivityHeight = 8; // Per user request
 
     let icon = theme.fg("dim", "○");
     let nameColor = "dim";
@@ -343,12 +343,12 @@ export default function (pi: ExtensionAPI) {
         color = "dim";
       }
 
-      // Extract last lines up to maxActivityHeight
+      // Extract last lines to fit the fixed height
       let logLines = rawActivity
         .split("\n")
         .map((l) => l.trim().replace(/\r/g, ""))
         .filter(Boolean)
-        .slice(-maxActivityHeight);
+        .slice(-fixedActivityHeight);
 
       // If empty, provide a fallback
       if (logLines.length === 0) {
@@ -357,14 +357,23 @@ export default function (pi: ExtensionAPI) {
         ];
       }
 
-      // Dynamic height rendering: only iterate over available lines
+      // Pad with empty strings to maintain exactly fixedActivityHeight rows
+      while (logLines.length < fixedActivityHeight) {
+        logLines.unshift("");
+      }
+
       for (let j = 0; j < logLines.length; j++) {
         const isLastLog = j === logLines.length - 1;
         const logBranch = isLastLog ? "⎿ " : "│ ";
         let content = logLines[j];
 
         // Add mode prefix to the first non-empty line
-        if (prefix && content && j === 0 && !content.startsWith(prefix)) {
+        if (
+          prefix &&
+          content &&
+          j === logLines.findIndex((l) => l !== "") &&
+          !content.startsWith(prefix)
+        ) {
           content = prefix + content;
         }
 

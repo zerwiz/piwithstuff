@@ -269,7 +269,6 @@ export default function (pi: ExtensionAPI) {
   ): string[] {
     const frame = SPINNER[widgetFrame % SPINNER.length];
     const safeWidth = Math.max(10, width - 2); // Guaranteed anti-wrap margin
-    const maxActivityHeight = 8; // Max lines to show per agent
 
     let icon = theme.fg("dim", "○");
     let nameColor = "dim";
@@ -327,7 +326,7 @@ export default function (pi: ExtensionAPI) {
       let color = "dim";
       let prefix = "";
 
-      // Determine content based on current mode
+      // Toggle logic: Only show the currently active mode
       if (state.activeTools.size > 0) {
         rawActivity = `using: ${Array.from(state.activeTools).join(", ")}`;
         color = "accent";
@@ -343,28 +342,26 @@ export default function (pi: ExtensionAPI) {
         color = "dim";
       }
 
-      // Extract last lines up to maxActivityHeight
+      // Extract last 1 to 3 non-empty lines (No forced blank padding)
       let logLines = rawActivity
         .split("\n")
         .map((l) => l.trim().replace(/\r/g, ""))
         .filter(Boolean)
-        .slice(-maxActivityHeight);
+        .slice(-3);
 
-      // If empty, provide a fallback
       if (logLines.length === 0) {
         logLines = [
           state.currentMode === "thinking" ? "thinking..." : "working...",
         ];
       }
 
-      // Dynamic height rendering: only iterate over available lines
       for (let j = 0; j < logLines.length; j++) {
         const isLastLog = j === logLines.length - 1;
         const logBranch = isLastLog ? "⎿ " : "│ ";
         let content = logLines[j];
 
-        // Add mode prefix to the first non-empty line
-        if (prefix && content && j === 0 && !content.startsWith(prefix)) {
+        // Add mode prefix to the very first line shown
+        if (j === 0 && prefix && !content.startsWith(prefix)) {
           content = prefix + content;
         }
 
@@ -435,7 +432,6 @@ export default function (pi: ExtensionAPI) {
     agentName: string,
     task: string,
     ctx: any,
-    signal?: AbortSignal,
   ): Promise<{ output: string; exitCode: number; elapsed: number }> {
     const key = agentName.toLowerCase();
     const state = agentStates.get(key);
@@ -461,7 +457,7 @@ export default function (pi: ExtensionAPI) {
     state.elapsed = 0;
     state.lastWork = "";
     state.lastThinking = "";
-    state.currentMode = "thinking";
+    state.currentMode = "idle";
     state.activeTools.clear();
     state.runCount++;
 
@@ -507,18 +503,6 @@ export default function (pi: ExtensionAPI) {
         env: { ...process.env },
       });
 
-      const onAbort = () => {
-        proc.kill("SIGINT");
-      };
-
-      if (signal) {
-        if (signal.aborted) {
-          onAbort();
-        } else {
-          signal.addEventListener("abort", onAbort);
-        }
-      }
-
       let buffer = "";
 
       proc.stdout!.setEncoding("utf-8");
@@ -536,15 +520,15 @@ export default function (pi: ExtensionAPI) {
               if (delta?.type === "text_delta") {
                 textChunks.push(delta.delta || "");
                 state.lastWork = textChunks.join("");
-                state.currentMode = "working"; // Switch to working
+                state.currentMode = "working"; // Switch mode
                 updateWidget();
               } else if (delta?.type === "thinking_delta") {
                 state.lastThinking += delta.delta || "";
-                state.currentMode = "thinking"; // Switch to thinking
+                state.currentMode = "thinking"; // Switch mode
                 updateWidget();
               } else if (delta?.type === "thinking_start") {
                 state.lastThinking = "";
-                state.currentMode = "thinking";
+                state.currentMode = "thinking"; // Switch mode
                 updateWidget();
               }
             } else if (event.type === "tool_execution_start") {
@@ -556,7 +540,7 @@ export default function (pi: ExtensionAPI) {
             } else if (event.type === "tool_execution_end") {
               if (event.toolCall?.name)
                 state.activeTools.delete(event.toolCall.name);
-              state.currentMode = "working"; // Revert to working mode after tool
+              state.currentMode = "working"; // Default back after tool
               updateWidget();
             } else if (event.type === "message_end") {
               const msg = event.message;
@@ -584,10 +568,6 @@ export default function (pi: ExtensionAPI) {
       proc.stderr!.on("data", () => {});
 
       proc.on("close", (code) => {
-        if (signal) {
-          signal.removeEventListener("abort", onAbort);
-        }
-
         if (buffer.trim()) {
           try {
             const event = JSON.parse(buffer);
@@ -601,36 +581,30 @@ export default function (pi: ExtensionAPI) {
           } catch {}
         }
 
-        const isAborted = signal?.aborted;
         state.elapsed = Date.now() - startTime;
-        state.status = code === 0 && !isAborted ? "done" : "error";
+        state.status = code === 0 ? "done" : "error";
         state.currentMode = "idle";
         state.activeTools.clear();
 
-        if (code === 0 && !isAborted) {
+        if (code === 0) {
           state.sessionFile = agentSessionFile;
         }
 
         updateWidget();
 
         ctx.ui.notify(
-          `${displayName(state.def.name)} ${isAborted ? "aborted" : state.status} in ${Math.round(state.elapsed / 1000)}s`,
-          code === 0 && !isAborted ? "success" : "error",
+          `${displayName(state.def.name)} ${state.status} in ${Math.round(state.elapsed / 1000)}s`,
+          state.status === "done" ? "success" : "error",
         );
 
         resolve({
-          output: isAborted
-            ? textChunks.join("") + "\n\n[Task canceled by user]"
-            : textChunks.join(""),
-          exitCode: isAborted ? 1 : (code ?? 1),
+          output: textChunks.join(""),
+          exitCode: code ?? 1,
           elapsed: state.elapsed,
         });
       });
 
       proc.on("error", (err) => {
-        if (signal) {
-          signal.removeEventListener("abort", onAbort);
-        }
         state.status = "error";
         state.currentMode = "idle";
         state.activeTools.clear();
@@ -825,7 +799,7 @@ export default function (pi: ExtensionAPI) {
             details: { agent, task, status: "dispatching" },
           });
         }
-        const result = await dispatchAgent(agent, task, ctx, _signal);
+        const result = await dispatchAgent(agent, task, ctx);
         const truncated =
           result.output.length > 8000
             ? result.output.slice(0, 8000) + "\n\n... [truncated]"
@@ -1092,7 +1066,7 @@ Extra:
 
     const teamNames = Object.keys(teams);
     if (teamNames.length > 0) {
-      activateTeam(activeTeamName || teamNames[0]);
+      activateTeam(teamNames[0]);
     }
 
     // Lock down to dispatcher-only
