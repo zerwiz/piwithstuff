@@ -29,6 +29,7 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	let writeAllowedRoot: string | null = null;
+	let sessionDeletePermission: "allowed" | "blocked" | "ask" = "ask";
 
 	function resolvePath(p: string, cwd: string): string {
 		if (p.startsWith("~")) {
@@ -125,35 +126,33 @@ export default function (pi: ExtensionAPI) {
 	pi.on("tool_call", async (event, ctx) => {
 		let violationReason: string | null = null;
 		let shouldAsk = false;
+		let isDeletion = false;
 
 		// 1. Extract paths from tool input
 		const inputPaths: string[] = [];
-		if (isToolCallEventType("read", event) || isToolCallEventType("write", event) || isToolCallEventType("edit", event)) {
+		if (isToolCallEventType("read", event) || isToolCallEventType("write", event) || isToolCallEventType("edit", event) || isToolCallEventType("replace", event)) {
 			inputPaths.push(event.input.path);
 		} else if (isToolCallEventType("grep", event) || isToolCallEventType("find", event) || isToolCallEventType("ls", event)) {
 			inputPaths.push(event.input.path || ".");
 		}
 
-		// 2. Project Isolation Check (CRITICAL)
-		// If project isolation is active, check if modifying tools are within root
-		if (writeAllowedRoot && !violationReason) {
+		// 2. Project Isolation & Deletion Check
+		if (!violationReason) {
 			const isModifyingTool = isToolCallEventType("write", event) || isToolCallEventType("edit", event) || isToolCallEventType("replace", event);
 			
 			if (isModifyingTool) {
 				const target = resolvePath(event.input.path, ctx.cwd);
-				if (!isPathWithin(target, writeAllowedRoot)) {
+				if (writeAllowedRoot && !isPathWithin(target, writeAllowedRoot)) {
 					violationReason = `Write access denied: Path ${event.input.path} is outside the allowed project root (${writeAllowedRoot})`;
 				}
 			} else if (isToolCallEventType("bash", event)) {
 				const command = event.input.command;
-				// Heuristic: check if command might modify files
-				const mightModify = /[\s>|]/.test(command) || /\b(rm|mv|sed|tee|touch|mkdir|rmdir|cp|git)\b/.test(command);
+				const isDeleteCmd = /\b(rm|rmdir|unlink)\b/.test(command);
+				const mightModify = isDeleteCmd || /[\s>|]/.test(command) || /\b(mv|sed|tee|touch|mkdir|cp|git)\b/.test(command);
 				
-				if (mightModify) {
-					// We can't easily parse all paths from a bash command, so we warn/block
-					// if isolation is strict. For now, let's look for tokens that look like paths.
-					// A better way might be to check CWD or specific path arguments.
-					// Simplest heuristic: check if any absolute path in command is outside root.
+				if (isDeleteCmd) isDeletion = true;
+
+				if (mightModify && writeAllowedRoot) {
 					const pathsInCmd = command.match(/\/[^\s;|<>|]+/g) || [];
 					for (const p of pathsInCmd) {
 						if (path.isAbsolute(p) && !isPathWithin(p, writeAllowedRoot)) {
@@ -165,7 +164,33 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		// 3. Check Zero Access Paths for all tools that use path or glob
+		// 3. Deletion Protection Confirmation
+		if (isDeletion && !violationReason) {
+			if (sessionDeletePermission === "blocked") {
+				violationReason = "File deletion is blocked for this session.";
+			} else if (sessionDeletePermission === "ask") {
+				const options = [
+					"Yes, allow this deletion",
+					"Yes, allow deletions for this session",
+					"No, block this deletion",
+					"No, block all deletions for this session"
+				];
+				const choice = await ctx.ui.select("🛡️ Deletion Protection: Allow deletion?", options);
+				
+				if (choice === options[0]) {
+					// Allowed this time
+				} else if (choice === options[1]) {
+					sessionDeletePermission = "allowed";
+				} else if (choice === options[2] || choice === undefined) {
+					violationReason = "User denied deletion request.";
+				} else if (choice === options[3]) {
+					sessionDeletePermission = "blocked";
+					violationReason = "File deletion is blocked for this session.";
+				}
+			}
+		}
+
+		// 4. Check Zero Access Paths for all tools that use path or glob
 		if (!violationReason) {
 			const checkPaths = (pathsToCheck: string[]) => {
 				for (const p of pathsToCheck) {
@@ -194,7 +219,7 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		// 4. Tool-specific logic (Original Damage Control)
+		// 5. Tool-specific logic (Original Damage Control)
 		if (!violationReason) {
 			if (isToolCallEventType("bash", event)) {
 				const command = event.input.command;

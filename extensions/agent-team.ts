@@ -528,7 +528,7 @@ export default function (pi: ExtensionAPI) {
 		const args = [
 			"--mode", "json",
 			"-p",
-			"--no-extensions",
+			"-e", "extensions/damage-control.ts",
 			"--model", model,
 			"--tools", state.def.tools,
 			"--thinking", "low",

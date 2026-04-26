@@ -226,7 +226,7 @@ export default function (pi: ExtensionAPI) {
 				"--mode", "json",
 				"-p",
 				"--session", state.sessionFile,   // persistent session for /subcont resumption
-				"--no-extensions",
+				"-e", "extensions/damage-control.ts",
 				"--model", model,
 				"--tools", tools,
 				"--thinking", "off",
