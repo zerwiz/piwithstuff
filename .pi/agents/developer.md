@@ -1,7 +1,7 @@
 ---
 name: developer
 description: Implementation and code generation
-models: 
+models: nemotron-cascade-2:30b
 tools: read,write,edit,bash,grep,find,ls
 ---
 

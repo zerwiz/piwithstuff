@@ -1,7 +1,7 @@
 ---
 name: bowser
 description: Headless browser automation agent using Playwright CLI. Use when you need headless browsing, parallel browser sessions, UI testing, screenshots, or web scraping.
-models: 
+models: nemotron-cascade-2:30b
 color: orange
 skills:
   - playwright-bowser
