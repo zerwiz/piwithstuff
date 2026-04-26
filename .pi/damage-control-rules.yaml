@@ -291,7 +291,13 @@ noDeletePaths:
 # If an override matches a path, its allow* flags determine what's permitted,
 # regardless of bashToolPatterns, zeroAccessPaths, readOnlyPaths, etc.
 pathOverrides:
-
+  # Active: Allow all agents direct read/write access to project files
+  # This enables agents to read planning documents, source code, etc. without the widget UI
+  - path: "~/Documents/codeprojects/*"
+    allowDeletions: true
+    allowWrites: true
+    allowEdits: true
+    allowReads: true
 
   # Active: Lock deletion for this entire workspace while allowing reads, writes, and edits
   - path: "~/woh"
@@ -327,7 +333,7 @@ pathOverrides:
     allowWrites: false
     allowEdits: false
     allowReads: true
-  
+
   # Example: Protect a critical production directory - deny all deletions
   # - path: "/home/production-data"
   #   allowDeletions: false
