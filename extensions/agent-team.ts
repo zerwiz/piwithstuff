@@ -19,7 +19,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { Text, type AutocompleteItem, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { spawn } from "child_process";
-import { readdirSync, readFileSync, existsSync, mkdirSync, unlinkSync, lstatSync } from "fs";
+import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, lstatSync } from "fs";
 import { join, resolve } from "path";
 import { homedir } from "os";
 import { applyExtensionDefaults } from "./themeMap.ts";
@@ -181,6 +181,18 @@ function parseTeamsYaml(raw: string): Record<string, string[]> {
 	return teams;
 }
 
+function stringifyTeamsYaml(teams: Record<string, string[]>): string {
+	let out = "";
+	for (const [name, members] of Object.entries(teams)) {
+		out += `${name}:\n`;
+		for (const member of members) {
+			out += `  - ${member}\n`;
+		}
+		out += "\n";
+	}
+	return out.trim();
+}
+
 // ── Frontmatter Parser ───────────────────────────
 
 function parseAgentFile(filePath: string): AgentDef | null {
@@ -288,6 +300,14 @@ export default function (pi: ExtensionAPI) {
 		if (Object.keys(teams).length === 0) {
 			teams = { all: allAgentDefs.map(d => d.name) };
 		}
+	}
+
+	function saveTeams(cwd: string) {
+		// Save to the project-local teams.yaml
+		const teamsPath = join(cwd, ".pi", "agents", "teams.yaml");
+		try {
+			writeFileSync(teamsPath, stringifyTeamsYaml(teams), "utf-8");
+		} catch {}
 	}
 
 	function activateTeam(teamName: string) {
@@ -627,8 +647,16 @@ export default function (pi: ExtensionAPI) {
 					runCount: 0,
 					activeTools: new Set(),
 				});
+
+				// Sync with YAML
+				if (!teams[activeTeamName]) teams[activeTeamName] = [];
+				if (!teams[activeTeamName].includes(def.name)) {
+					teams[activeTeamName].push(def.name);
+				}
+				saveTeams(ctx.cwd);
+
 				updateWidget();
-				return { content: [{ type: "text", text: `Added specialist "${displayName(def.name)}" to the team.` }] };
+				return { content: [{ type: "text", text: `Added specialist "${displayName(def.name)}" to the team and updated config.` }] };
 			} else {
 				if (!agentStates.has(key)) {
 					return { content: [{ type: "text", text: `Agent "${agent}" is not in the team.` }] };
@@ -638,8 +666,15 @@ export default function (pi: ExtensionAPI) {
 					return { content: [{ type: "text", text: `Cannot remove agent "${agent}" while it is running.` }] };
 				}
 				agentStates.delete(key);
+
+				// Sync with YAML
+				if (teams[activeTeamName]) {
+					teams[activeTeamName] = teams[activeTeamName].filter(m => m.toLowerCase() !== key);
+				}
+				saveTeams(ctx.cwd);
+
 				updateWidget();
-				return { content: [{ type: "text", text: `Removed agent "${displayName(state.def.name)}" from the team.` }] };
+				return { content: [{ type: "text", text: `Removed agent "${displayName(state.def.name)}" from the team and updated config.` }] };
 			}
 		},
 
@@ -781,6 +816,16 @@ export default function (pi: ExtensionAPI) {
 				.map(s => `${displayName(s.def.name)} (${s.status}, runs: ${s.runCount}): ${s.def.description}`)
 				.join("\n");
 			ctx.ui.notify(list || "No agents loaded", "info");
+		}
+	});
+
+	pi.registerCommand("agents-reload", {
+		description: "Reload team configuration from YAML files",
+		handler: async (_args, ctx) => {
+			loadAgents(ctx.cwd);
+			activateTeam(activeTeamName || Object.keys(teams)[0] || "all");
+			updateWidget();
+			ctx.ui.notify(`Teams reloaded. Active team: ${activeTeamName}`, "success");
 		}
 	});
 
