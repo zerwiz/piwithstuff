@@ -1,5 +1,5 @@
 /**
- * Agent Team — Dispatcher-only orchestrator with tree dashboard
+ * Agent Team — Dispatcher-only orchestrator with Tree & Grid dashboards
  *
  * The primary Pi agent has NO codebase tools. It can ONLY delegate work
  * to specialist agents via the `dispatch_agent` tool. Each specialist
@@ -11,6 +11,8 @@
  * Commands:
  * /agents-team          — switch active team
  * /agents-list          — list loaded agents
+ * /agents-view          — toggle between 'tree' and 'grid' view
+ * /agents-grid N        — set grid column count (switches to grid view)
  *
  * Usage: pi -e extensions/agent-team.ts
  */
@@ -35,7 +37,7 @@ import {
 } from "fs";
 import { join, resolve } from "path";
 import { homedir } from "os";
-import { applyExtensionDefaults } from "./themeMap.ts";
+import { applyExtensionDefaults } from "../themeMap.js";
 
 // ── Types ────────────────────────────────────────
 
@@ -183,17 +185,6 @@ function displayName(name: string): string {
     .join(" ");
 }
 
-/** Wrap text into lines of max width */
-function wrapLine(text: string, width: number): string[] {
-  const lines: string[] = [];
-  let current = text;
-  while (current.length > 0) {
-    lines.push(current.slice(0, width));
-    current = current.slice(width);
-  }
-  return lines;
-}
-
 // ── Teams YAML Parser ────────────────────────────
 
 function parseTeamsYaml(raw: string): Record<string, string[]> {
@@ -291,6 +282,8 @@ export default function (pi: ExtensionAPI) {
   let allAgentDefs: AgentDef[] = [];
   let teams: Record<string, string[]> = {};
   let activeTeamName = "";
+  let viewMode: "tree" | "grid" = "tree";
+  let gridCols = 2;
   let widgetCtx: any;
   let sessionDir = "";
   let contextWindow = 0;
@@ -370,6 +363,10 @@ export default function (pi: ExtensionAPI) {
         activeTools: new Set(),
       });
     }
+
+    // Auto-size grid columns based on team size
+    const size = agentStates.size;
+    gridCols = size <= 3 ? size : size === 4 ? 2 : 3;
   }
 
   function ensureGlobalInterval() {
@@ -401,9 +398,135 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  // ── Rendering ────────────────────────────────
+  // ── View Renderers ───────────────────────────
 
-  function renderAgentLine(state: AgentState, theme: any): string {
+  function renderGridCard(
+    state: AgentState,
+    colWidth: number,
+    theme: any,
+  ): string[] {
+    const w = Math.max(colWidth - 2, 10);
+    const truncate = (s: string, max: number) =>
+      s.length > max ? s.slice(0, Math.max(0, max - 3)) + "..." : s;
+
+    const frame = SPINNER[widgetFrame % SPINNER.length];
+    const statusColor =
+      state.status === "idle"
+        ? "dim"
+        : state.status === "running"
+          ? "accent"
+          : state.status === "done"
+            ? "success"
+            : "error";
+    const statusIcon =
+      state.status === "idle"
+        ? "○"
+        : state.status === "running"
+          ? frame
+          : state.status === "done"
+            ? "✓"
+            : "✗";
+
+    const name = displayName(state.def.name);
+    const nameColor =
+      state.status === "running"
+        ? "accent"
+        : state.status === "error"
+          ? "error"
+          : "dim";
+    const nameStr = theme.fg(nameColor, theme.bold(truncate(name, w - 1)));
+    const nameVisible = Math.min(name.length, w - 1);
+
+    const statusStr = `${statusIcon} ${state.status}`;
+    const timeStr =
+      state.status !== "idle" ? ` ${Math.round(state.elapsed / 1000)}s` : "";
+    const toolStr = state.toolCount > 0 ? ` · ${state.toolCount} tools` : "";
+    const fullStatus = statusStr + timeStr + toolStr;
+    const truncatedStatus = truncate(fullStatus, w - 1);
+    const statusLine = theme.fg(statusColor, truncatedStatus);
+    const statusVisible = truncatedStatus.length;
+
+    let ctxLine = theme.fg("dim", "");
+    let ctxVisible = 0;
+    if (state.contextPct > 0) {
+      const filled = Math.ceil(state.contextPct / 20);
+      const bar = "#".repeat(filled) + "-".repeat(5 - filled);
+      const ctxStr = truncate(
+        `[${bar}] ${Math.ceil(state.contextPct)}%`,
+        w - 1,
+      );
+      ctxLine = theme.fg("dim", ctxStr);
+      ctxVisible = ctxStr.length;
+    }
+
+    let workRaw = state.task ? state.task : state.def.description;
+    if (state.status === "running") {
+      if (state.activeTools.size > 0) {
+        workRaw = `using: ${Array.from(state.activeTools).join(", ")}`;
+      } else if (state.lastWork) {
+        workRaw =
+          state.lastWork
+            .split("\n")
+            .filter((l) => l.trim())
+            .pop() || "";
+      } else if (state.lastThinking) {
+        const thinkLast =
+          state.lastThinking
+            .split("\n")
+            .filter((l) => l.trim())
+            .pop() || "";
+        workRaw = `thinking: ${thinkLast}`;
+      }
+    } else if (
+      (state.status === "done" || state.status === "error") &&
+      state.lastWork
+    ) {
+      workRaw =
+        state.lastWork
+          .split("\n")
+          .filter((l) => l.trim())
+          .pop() || "";
+    }
+
+    const workText = truncate(workRaw.replace(/\s+/g, " "), w - 1);
+    const workLine = theme.fg(
+      state.status === "running" ? "muted" : "dim",
+      workText,
+    );
+    const workVisible = workText.length;
+
+    const top = "┌" + "─".repeat(w) + "┐";
+    const bot = "└" + "─".repeat(w) + "┘";
+    const border = (content: string, visLen: number) =>
+      theme.fg("dim", "│") +
+      content +
+      " ".repeat(Math.max(0, w - visLen)) +
+      theme.fg("dim", "│");
+
+    const lines = [
+      theme.fg("dim", top),
+      border(" " + nameStr, 1 + nameVisible),
+      border(" " + statusLine, 1 + statusVisible),
+    ];
+
+    if (ctxVisible > 0) {
+      lines.push(border(" " + ctxLine, 1 + ctxVisible));
+    } else {
+      lines.push(border(" ", 1));
+    }
+
+    lines.push(border(" " + workLine, 1 + workVisible));
+    lines.push(theme.fg("dim", bot));
+
+    return lines;
+  }
+
+  function renderTreeAgent(
+    state: AgentState,
+    isLast: boolean,
+    width: number,
+    theme: any,
+  ): string[] {
     const frame = SPINNER[widgetFrame % SPINNER.length];
     let icon = theme.fg("dim", "○");
     let nameColor = "dim";
@@ -445,7 +568,75 @@ export default function (pi: ExtensionAPI) {
       parts.length > 0
         ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}`
         : "";
-    return `${icon} ${theme.fg(nameColor, name)}  ${theme.fg(descColor, truncateToWidth(desc, 50))}${stats}`;
+
+    const branch = isLast ? "└─" : "├─";
+    const headerLine =
+      truncateToWidth(
+        theme.fg("dim", branch) +
+          " " +
+          `${icon} ${theme.fg(nameColor, name)}  ${theme.fg(descColor, desc)}`,
+        width - visibleWidth(stats),
+      ) + stats;
+
+    const outLines = [truncateToWidth(headerLine, width)];
+
+    if (state.status === "running") {
+      const activityPrefix = isLast ? "    " : "│   ";
+
+      if (state.activeTools.size > 0) {
+        const toolNames = Array.from(state.activeTools).join(", ");
+        outLines.push(
+          truncateToWidth(
+            theme.fg("dim", activityPrefix) +
+              theme.fg("accent", `⎿  using: ${toolNames}...`),
+            width,
+          ),
+        );
+      } else {
+        const rawActivity = state.lastWork
+          ? state.lastWork
+          : state.lastThinking;
+        const color = state.lastWork ? "muted" : "dim";
+        const isThinking = !state.lastWork && state.lastThinking;
+
+        if (rawActivity) {
+          // Strictly limit to 3 lines to prevent UI jumping around
+          const logLines = rawActivity
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(Boolean)
+            .slice(-3);
+
+          for (let j = 0; j < logLines.length; j++) {
+            const isLastLog = j === logLines.length - 1;
+            const logBranch = isLastLog ? "⎿ " : "│ ";
+            let content = logLines[j];
+
+            // Add thinking prefix only to the first displayed thinking line
+            if (isThinking && j === 0) content = `thinking: ${content}`;
+
+            outLines.push(
+              truncateToWidth(
+                theme.fg("dim", activityPrefix) +
+                  theme.fg("dim", logBranch) +
+                  theme.fg(color, content),
+                width,
+              ),
+            );
+          }
+        } else {
+          outLines.push(
+            truncateToWidth(
+              theme.fg("dim", activityPrefix) +
+                theme.fg("dim", "⎿  thinking..."),
+              width,
+            ),
+          );
+        }
+      }
+    }
+
+    return outLines;
   }
 
   function updateWidget() {
@@ -469,112 +660,61 @@ export default function (pi: ExtensionAPI) {
           const headingColor = anyRunning ? "accent" : "dim";
           const headingIcon = anyRunning ? "●" : "○";
 
-          const lines: string[] = [
-            truncateToWidth(
-              theme.fg(headingColor, headingIcon) +
-                " " +
-                theme.fg(headingColor, `Team: ${activeTeamName}`),
-              width,
-            ),
-          ];
+          const headingLine = truncateToWidth(
+            theme.fg(headingColor, headingIcon) +
+              " " +
+              theme.fg(headingColor, `Team: ${activeTeamName}`) +
+              theme.fg("dim", `  (${viewMode} view)`),
+            width,
+          );
 
-          const agents = Array.from(agentStates.values());
-          for (let i = 0; i < agents.length; i++) {
-            const state = agents[i];
-            const isLast = i === agents.length - 1;
-            const branch = isLast ? "└─" : "├─";
+          if (viewMode === "grid") {
+            const cols = Math.min(gridCols, agentStates.size);
+            const gap = 1;
+            const colWidth = Math.floor((width - gap * (cols - 1)) / cols);
+            const agents = Array.from(agentStates.values());
+            const rows: string[][] = [];
 
-            lines.push(
-              truncateToWidth(
-                theme.fg("dim", branch) + " " + renderAgentLine(state, theme),
-                width,
-              ),
-            );
+            for (let i = 0; i < agents.length; i += cols) {
+              const rowAgents = agents.slice(i, i + cols);
+              const cards = rowAgents.map((a) =>
+                renderGridCard(a, colWidth, theme),
+              );
 
-            if (state.status === "running") {
-              const activityBranch = isLast ? "   " : "│  ";
+              while (cards.length < cols) {
+                cards.push(Array(6).fill(" ".repeat(colWidth)));
+              }
 
-              if (state.activeTools.size > 0) {
-                const toolNames = Array.from(state.activeTools).join(", ");
-                lines.push(
-                  truncateToWidth(
-                    theme.fg("dim", activityBranch) +
-                      theme.fg("accent", `  ⎿  using: ${toolNames}...`),
-                    width,
-                  ),
+              const cardHeight = 6;
+              for (let line = 0; line < cardHeight; line++) {
+                rows.push(
+                  cards.map((card) => card[line] || " ".repeat(colWidth)),
                 );
-              } else {
-                const workText = (state.lastWork || "").trim();
-                const thinkText = (state.lastThinking || "").trim();
-                const subLines: string[] = [];
-
-                // 1. Thinking Area (up to 8 rows)
-                if (thinkText) {
-                  const lastThinkChunk =
-                    thinkText
-                      .split("\n")
-                      .filter((l) => l.trim())
-                      .pop() || "";
-                  const wrappedThink = wrapLine(
-                    `thinking: ${lastThinkChunk}`,
-                    width - 20,
-                  ).slice(0, 8);
-                  for (let j = 0; j < wrappedThink.length; j++) {
-                    const isLastThink =
-                      j === wrappedThink.length - 1 && !workText;
-                    const thinkBranch = isLastThink ? "⎿ " : "  ";
-                    subLines.push(
-                      theme.fg("dim", `  ${thinkBranch} `) +
-                        theme.fg("dim", theme.italic(wrappedThink[j])),
-                    );
-                  }
-                }
-
-                // 2. Actual Work Section (Clearly separated)
-                if (workText) {
-                  const lastWorkChunk =
-                    workText
-                      .split("\n")
-                      .filter((l) => l.trim())
-                      .pop() || "";
-                  const wrappedWork = wrapLine(lastWorkChunk, width - 20).slice(
-                    0,
-                    3,
-                  );
-                  for (let j = 0; j < wrappedWork.length; j++) {
-                    const isLastWork = j === wrappedWork.length - 1;
-                    const workBranch = isLastWork ? "⎿ " : "  ";
-                    subLines.push(
-                      theme.fg("dim", `  ${workBranch} `) +
-                        theme.fg("muted", wrappedWork[j]),
-                    );
-                  }
-                }
-
-                if (subLines.length === 0) {
-                  lines.push(
-                    truncateToWidth(
-                      theme.fg("dim", activityBranch) +
-                        theme.fg("dim", "  ⎿  thinking..."),
-                      width,
-                    ),
-                  );
-                } else {
-                  for (const sl of subLines) {
-                    lines.push(
-                      truncateToWidth(
-                        theme.fg("dim", activityBranch) + sl,
-                        width,
-                      ),
-                    );
-                  }
-                }
               }
             }
-          }
 
-          text.setText(lines.join("\n"));
-          return text.render(width);
+            const output = rows.map((cols) => cols.join(" ".repeat(gap)));
+            text.setText([headingLine, ...output].join("\n"));
+            return text.render(width);
+          } else {
+            // Tree View
+            const agents = Array.from(agentStates.values());
+            const lines = [headingLine];
+
+            for (let i = 0; i < agents.length; i++) {
+              const isLast = i === agents.length - 1;
+              const agentLines = renderTreeAgent(
+                agents[i],
+                isLast,
+                width,
+                theme,
+              );
+              lines.push(...agentLines);
+            }
+
+            text.setText(lines.join("\n"));
+            return text.render(width);
+          }
         },
         invalidate() {
           text.invalidate();
@@ -1158,6 +1298,52 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("agents-view", {
+    description: "Toggle between tree and grid view",
+    getArgumentCompletions: (prefix: string): AutocompleteItem[] | null => {
+      const items = [
+        { value: "tree", label: "Tree View" },
+        { value: "grid", label: "Grid View" },
+      ];
+      const filtered = items.filter((i) => i.value.startsWith(prefix));
+      return filtered.length > 0 ? filtered : items;
+    },
+    handler: async (args, ctx) => {
+      const choice = args?.trim().toLowerCase();
+      if (choice === "tree" || choice === "grid") {
+        viewMode = choice;
+        ctx.ui.notify(`Switched to ${viewMode} view`, "success");
+        updateWidget();
+      } else {
+        ctx.ui.notify("Usage: /agents-view <tree|grid>", "error");
+      }
+    },
+  });
+
+  pi.registerCommand("agents-grid", {
+    description: "Set grid columns and switch to grid view: /agents-grid <1-6>",
+    getArgumentCompletions: (prefix: string): AutocompleteItem[] | null => {
+      const items = ["1", "2", "3", "4", "5", "6"].map((n) => ({
+        value: n,
+        label: `${n} columns`,
+      }));
+      const filtered = items.filter((i) => i.value.startsWith(prefix));
+      return filtered.length > 0 ? filtered : items;
+    },
+    handler: async (args, _ctx) => {
+      widgetCtx = _ctx;
+      const n = parseInt(args?.trim() || "", 10);
+      if (n >= 1 && n <= 6) {
+        gridCols = n;
+        viewMode = "grid"; // Auto-switch to grid view when setting columns
+        _ctx.ui.notify(`Grid set to ${gridCols} columns`, "info");
+        updateWidget();
+      } else {
+        _ctx.ui.notify("Usage: /agents-grid <1-6>", "error");
+      }
+    },
+  });
+
   /**
    * Get all agents in the system for subagent visibility
    * Returns formatted agent definitions that subagents can use
@@ -1282,53 +1468,6 @@ ${agentCatalog}
 Use \`getAllAgents()\` in your reasoning to see all agents in the system (active and inactive) for broader task delegation needs.
 CRITICAL: Read the /piwithstuff/.pi/agents/teams.yaml file using the scout agent if you are unsure about the project structure.
 
-This is the Teams and Agents
-
-main:
-  - scout
-  - planner
-  - developer
-  - reviewer
-  - documenter
-  - red-team
-  - session-manager # NEW: Session management
-
-plan-build:
-  - planner
-  - developer
-  - reviewer
-  - session-manager # NEW: Session tracking
-
-info:
-  - scout
-  - documenter
-  - reviewer
-  - session-manager # NEW: Session documentation
-
-frontend:
-  - planner
-  - frontendcoder
-  - scout
-  - reviewer
-  - bowser
-  - session-manager # NEW: Frontend session management
-
-pi-pi:
-  - ext-expert
-  - theme-expert
-  - skill-expert
-  - config-expert
-  - tui-expert
-  - prompt-expert
-  - agent-expert
-  - session-expert
-
-Extra:
-  - developer
-  - reviewer
-  - scout
-  - dispatcher
-
 ${getAllAgents()}
 `,
     };
@@ -1383,6 +1522,8 @@ ${getAllAgents()}
         `Team sets loaded from: .pi/agents/teams.yaml\n\n` +
         `/agents-team          Select a team\n` +
         `/agents-list          List active agents and status\n` +
+        `/agents-view          Toggle tree/grid view\n` +
+        `/agents-grid <1-6>    Set grid column count\n` +
         `/agents-reload        Reload team configuration\n` +
         `/agents-status        Show active/inactive specialists`,
       "info",

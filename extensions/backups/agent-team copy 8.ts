@@ -1,12 +1,12 @@
 /**
- * Agent Team — Dispatcher-only orchestrator with tree dashboard
+ * Agent Team — Dispatcher-only orchestrator with strict Tree dashboard
  *
  * The primary Pi agent has NO codebase tools. It can ONLY delegate work
- * to specialist agents via the `dispatch_agent` tool. Each specialist
- * maintains its own Pi session for cross-invocation memory.
+ * to specialist agents via the `dispatch_agent` tool.
  *
  * Loads agent definitions from agents/*.md, .claude/agents/*.md, .pi/agents/*.md.
- * Teams are defined in .pi/agents/teams.yaml.
+ * Teams are defined in .pi/agents/teams.yaml — on boot a select dialog lets
+ * you pick which team to work with.
  *
  * Commands:
  * /agents-team          — switch active team
@@ -17,12 +17,7 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import {
-  Text,
-  type AutocompleteItem,
-  truncateToWidth,
-  visibleWidth,
-} from "@mariozechner/pi-tui";
+import { Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { spawn } from "child_process";
 import {
   readdirSync,
@@ -31,15 +26,11 @@ import {
   existsSync,
   mkdirSync,
   unlinkSync,
-  lstatSync,
 } from "fs";
 import { join, resolve } from "path";
-import { homedir } from "os";
-import { applyExtensionDefaults } from "./themeMap.ts";
+import { applyExtensionDefaults } from "../themeMap.js";
 
 // ── Types ────────────────────────────────────────
-
-type MemoryScope = "user" | "project" | "local";
 
 interface AgentDef {
   name: string;
@@ -57,6 +48,7 @@ interface AgentState {
   elapsed: number;
   lastWork: string;
   lastThinking: string;
+  currentMode: "idle" | "thinking" | "working" | "tool";
   contextPct: number;
   sessionFile: string | null;
   runCount: number;
@@ -65,133 +57,13 @@ interface AgentState {
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-// ── Memory Helpers ───────────────────────────────
-
-const MAX_MEMORY_LINES = 200;
-
-export function isUnsafeName(name: string): boolean {
-  if (!name || name.length > 128) return true;
-  return !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name);
-}
-
-export function isSymlink(filePath: string): boolean {
-  try {
-    return lstatSync(filePath).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-export function safeReadFile(filePath: string): string | undefined {
-  if (!existsSync(filePath)) return undefined;
-  if (isSymlink(filePath)) return undefined;
-  try {
-    return readFileSync(filePath, "utf-8");
-  } catch {
-    return undefined;
-  }
-}
-
-export function resolveMemoryDir(
-  agentName: string,
-  scope: MemoryScope,
-  cwd: string,
-): string {
-  if (isUnsafeName(agentName)) {
-    throw new Error(`Unsafe agent name for memory directory: "${agentName}"`);
-  }
-  const key = agentName.toLowerCase().replace(/\s+/g, "-");
-  switch (scope) {
-    case "user":
-      return join(homedir(), ".pi", "agent-memory", key);
-    case "project":
-      return join(cwd, ".pi", "agent-memory", key);
-    case "local":
-      return join(cwd, ".pi", "agent-memory-local", key);
-  }
-}
-
-export function ensureMemoryDir(memoryDir: string): void {
-  if (existsSync(memoryDir)) {
-    if (isSymlink(memoryDir)) {
-      throw new Error(
-        `Refusing to use symlinked memory directory: ${memoryDir}`,
-      );
-    }
-    return;
-  }
-  mkdirSync(memoryDir, { recursive: true });
-}
-
-export function readMemoryIndex(memoryDir: string): string | undefined {
-  if (isSymlink(memoryDir)) return undefined;
-  const memoryFile = join(memoryDir, "MEMORY.md");
-  const content = safeReadFile(memoryFile);
-  if (content === undefined) return undefined;
-
-  const lines = content.split("\n");
-  if (lines.length > MAX_MEMORY_LINES) {
-    return (
-      lines.slice(0, MAX_MEMORY_LINES).join("\n") +
-      "\n... (truncated at 200 lines)"
-    );
-  }
-  return content;
-}
-
-export function buildMemoryBlock(
-  agentName: string,
-  scope: MemoryScope,
-  cwd: string,
-): string {
-  const memoryDir = resolveMemoryDir(agentName, scope, cwd);
-  ensureMemoryDir(memoryDir);
-  const existingMemory = readMemoryIndex(memoryDir);
-
-  const header = `# Agent Memory\n\nYou have a persistent memory directory at: ${memoryDir}/\nMemory scope: ${scope}\n\nThis memory persists across sessions. Use it to build up knowledge over time.`;
-  const memoryContent = existingMemory
-    ? `\n\n## Current MEMORY.md\n${existingMemory}`
-    : `\n\nNo MEMORY.md exists yet. Create one at ${join(memoryDir, "MEMORY.md")} to start building persistent memory.`;
-
-  const instructions = `\n\n## Memory Instructions\n- MEMORY.md is an index file — keep it concise (under 200 lines).\n- Store detailed memories in separate files within ${memoryDir}/ and link to them from MEMORY.md.\n- Update or remove memories that become outdated.\n- You have Read, Write, and Edit tools available for managing memory files.`;
-
-  return header + memoryContent + instructions;
-}
-
-export function buildReadOnlyMemoryBlock(
-  agentName: string,
-  scope: MemoryScope,
-  cwd: string,
-): string {
-  const memoryDir = resolveMemoryDir(agentName, scope, cwd);
-  const existingMemory = readMemoryIndex(memoryDir);
-
-  const header = `# Agent Memory (read-only)\n\nMemory scope: ${scope}\nYou have read-only access to memory. You can reference existing memories but cannot modify them.`;
-  const memoryContent = existingMemory
-    ? `\n\n## Current MEMORY.md\n${existingMemory}`
-    : `\n\nNo memory is available yet.`;
-
-  return header + memoryContent;
-}
-
-// ── Helpers ──────────────────────────────────────
+// ── Display Name Helper ──────────────────────────
 
 function displayName(name: string): string {
   return name
     .split("-")
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
-}
-
-/** Wrap text into lines of max width */
-function wrapLine(text: string, width: number): string[] {
-  const lines: string[] = [];
-  let current = text;
-  while (current.length > 0) {
-    lines.push(current.slice(0, width));
-    current = current.slice(width);
-  }
-  return lines;
 }
 
 // ── Teams YAML Parser ────────────────────────────
@@ -294,6 +166,7 @@ export default function (pi: ExtensionAPI) {
   let widgetCtx: any;
   let sessionDir = "";
   let contextWindow = 0;
+
   let widgetFrame = 0;
   let globalInterval: ReturnType<typeof setInterval> | undefined;
 
@@ -305,29 +178,15 @@ export default function (pi: ExtensionAPI) {
 
     allAgentDefs = scanAgentDirs(cwd);
 
-    const teamsPaths = [
-      join(cwd, ".pi", "teams.yaml"),
-      join(cwd, ".pi", "agents", "teams.yaml"),
-    ];
-
-    teams = {};
-    for (const teamsPath of teamsPaths) {
-      if (existsSync(teamsPath)) {
-        try {
-          const loadedTeams = parseTeamsYaml(readFileSync(teamsPath, "utf-8"));
-          for (const [teamName, members] of Object.entries(loadedTeams)) {
-            if (!teams[teamName]) {
-              teams[teamName] = [];
-            }
-            // Merge members, avoid duplicates
-            for (const member of members) {
-              if (!teams[teamName].includes(member)) {
-                teams[teamName].push(member);
-              }
-            }
-          }
-        } catch {}
+    const teamsPath = join(cwd, ".pi", "agents", "teams.yaml");
+    if (existsSync(teamsPath)) {
+      try {
+        teams = parseTeamsYaml(readFileSync(teamsPath, "utf-8"));
+      } catch {
+        teams = {};
       }
+    } else {
+      teams = {};
     }
 
     if (Object.keys(teams).length === 0) {
@@ -336,8 +195,9 @@ export default function (pi: ExtensionAPI) {
   }
 
   function saveTeams(cwd: string) {
-    // Save to the project-local teams.yaml
-    const teamsPath = join(cwd, ".pi", "agents", "teams.yaml");
+    const dirPath = join(cwd, ".pi", "agents");
+    if (!existsSync(dirPath)) mkdirSync(dirPath, { recursive: true });
+    const teamsPath = join(dirPath, "teams.yaml");
     try {
       writeFileSync(teamsPath, stringifyTeamsYaml(teams), "utf-8");
     } catch {}
@@ -364,6 +224,7 @@ export default function (pi: ExtensionAPI) {
         elapsed: 0,
         lastWork: "",
         lastThinking: "",
+        currentMode: "idle",
         contextPct: 0,
         sessionFile: existsSync(sessionFile) ? sessionFile : null,
         runCount: 0,
@@ -381,30 +242,35 @@ export default function (pi: ExtensionAPI) {
       lastTick = now;
       widgetFrame++;
 
+      let anyRunning = false;
       for (const state of agentStates.values()) {
         if (state.status === "running") {
           state.elapsed += delta;
+          anyRunning = true;
         }
       }
 
       updateWidget();
+
+      if (!anyRunning) {
+        clearInterval(globalInterval);
+        globalInterval = undefined;
+      }
     }, 80);
   }
 
-  function stopGlobalIntervalIfNoRunning() {
-    const anyRunning = Array.from(agentStates.values()).some(
-      (s) => s.status === "running",
-    );
-    if (!anyRunning && globalInterval) {
-      clearInterval(globalInterval);
-      globalInterval = undefined;
-    }
-  }
+  // ── Tree Rendering ───────────────────────────
 
-  // ── Rendering ────────────────────────────────
-
-  function renderAgentLine(state: AgentState, theme: any): string {
+  function renderTreeAgent(
+    state: AgentState,
+    isLast: boolean,
+    width: number,
+    theme: any,
+  ): string[] {
     const frame = SPINNER[widgetFrame % SPINNER.length];
+    const safeWidth = Math.max(10, width - 2); // Guaranteed anti-wrap margin
+    const maxActivityHeight = 8; // Max lines to show per agent
+
     let icon = theme.fg("dim", "○");
     let nameColor = "dim";
     let descColor = "dim";
@@ -425,16 +291,12 @@ export default function (pi: ExtensionAPI) {
 
     const name = theme.bold(displayName(state.def.name));
     const desc = state.task ? state.task : state.def.description;
-    const parts: string[] = [];
 
+    const parts: string[] = [];
     if (state.status !== "idle") {
       parts.push(`${Math.round(state.elapsed / 1000)}s`);
-      if (state.toolCount > 0)
-        parts.push(
-          `${state.toolCount} tool${state.toolCount === 1 ? "" : "s"}`,
-        );
+      if (state.toolCount > 0) parts.push(`${state.toolCount} tools`);
     }
-
     if (state.contextPct > 0) {
       const filled = Math.ceil(state.contextPct / 20);
       const bar = "#".repeat(filled) + "-".repeat(5 - filled);
@@ -445,7 +307,79 @@ export default function (pi: ExtensionAPI) {
       parts.length > 0
         ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}`
         : "";
-    return `${icon} ${theme.fg(nameColor, name)}  ${theme.fg(descColor, truncateToWidth(desc, 50))}${stats}`;
+
+    const branch = isLast ? "└─" : "├─";
+
+    const headerLine =
+      truncateToWidth(
+        theme.fg("dim", branch) +
+          " " +
+          `${icon} ${theme.fg(nameColor, name)}  ${theme.fg(descColor, desc)}`,
+        safeWidth - visibleWidth(stats),
+      ) + stats;
+
+    const outLines = [truncateToWidth(headerLine, safeWidth)];
+
+    if (state.status === "running") {
+      const activityPrefix = isLast ? "    " : "│   ";
+
+      let rawActivity = "";
+      let color = "dim";
+      let prefix = "";
+
+      // Determine content based on current mode
+      if (state.activeTools.size > 0) {
+        rawActivity = `using: ${Array.from(state.activeTools).join(", ")}`;
+        color = "accent";
+      } else if (state.currentMode === "thinking") {
+        rawActivity = state.lastThinking;
+        color = "dim";
+        prefix = "thinking: ";
+      } else if (state.currentMode === "working") {
+        rawActivity = state.lastWork;
+        color = "muted";
+      } else {
+        rawActivity = state.lastWork || state.lastThinking;
+        color = "dim";
+      }
+
+      // Extract last lines up to maxActivityHeight
+      let logLines = rawActivity
+        .split("\n")
+        .map((l) => l.trim().replace(/\r/g, ""))
+        .filter(Boolean)
+        .slice(-maxActivityHeight);
+
+      // If empty, provide a fallback
+      if (logLines.length === 0) {
+        logLines = [
+          state.currentMode === "thinking" ? "thinking..." : "working...",
+        ];
+      }
+
+      // Dynamic height rendering: only iterate over available lines
+      for (let j = 0; j < logLines.length; j++) {
+        const isLastLog = j === logLines.length - 1;
+        const logBranch = isLastLog ? "⎿ " : "│ ";
+        let content = logLines[j];
+
+        // Add mode prefix to the first non-empty line
+        if (prefix && content && j === 0 && !content.startsWith(prefix)) {
+          content = prefix + content;
+        }
+
+        outLines.push(
+          truncateToWidth(
+            theme.fg("dim", activityPrefix) +
+              theme.fg("dim", logBranch) +
+              theme.fg(color, content),
+            safeWidth,
+          ),
+        );
+      }
+    }
+
+    return outLines;
   }
 
   function updateWidget() {
@@ -468,109 +402,21 @@ export default function (pi: ExtensionAPI) {
           );
           const headingColor = anyRunning ? "accent" : "dim";
           const headingIcon = anyRunning ? "●" : "○";
+          const safeWidth = Math.max(10, width - 2);
 
-          const lines: string[] = [
-            truncateToWidth(
-              theme.fg(headingColor, headingIcon) +
-                " " +
-                theme.fg(headingColor, `Team: ${activeTeamName}`),
-              width,
-            ),
-          ];
+          const headingLine = truncateToWidth(
+            theme.fg(headingColor, headingIcon) +
+              " " +
+              theme.fg(headingColor, `Team: ${activeTeamName}`),
+            safeWidth,
+          );
 
           const agents = Array.from(agentStates.values());
+          const lines = [headingLine];
+
           for (let i = 0; i < agents.length; i++) {
-            const state = agents[i];
             const isLast = i === agents.length - 1;
-            const branch = isLast ? "└─" : "├─";
-
-            lines.push(
-              truncateToWidth(
-                theme.fg("dim", branch) + " " + renderAgentLine(state, theme),
-                width,
-              ),
-            );
-
-            if (state.status === "running") {
-              const activityBranch = isLast ? "   " : "│  ";
-
-              if (state.activeTools.size > 0) {
-                const toolNames = Array.from(state.activeTools).join(", ");
-                lines.push(
-                  truncateToWidth(
-                    theme.fg("dim", activityBranch) +
-                      theme.fg("accent", `  ⎿  using: ${toolNames}...`),
-                    width,
-                  ),
-                );
-              } else {
-                const workText = (state.lastWork || "").trim();
-                const thinkText = (state.lastThinking || "").trim();
-                const subLines: string[] = [];
-
-                // 1. Thinking Area (up to 8 rows)
-                if (thinkText) {
-                  const lastThinkChunk =
-                    thinkText
-                      .split("\n")
-                      .filter((l) => l.trim())
-                      .pop() || "";
-                  const wrappedThink = wrapLine(
-                    `thinking: ${lastThinkChunk}`,
-                    width - 20,
-                  ).slice(0, 8);
-                  for (let j = 0; j < wrappedThink.length; j++) {
-                    const isLastThink =
-                      j === wrappedThink.length - 1 && !workText;
-                    const thinkBranch = isLastThink ? "⎿ " : "  ";
-                    subLines.push(
-                      theme.fg("dim", `  ${thinkBranch} `) +
-                        theme.fg("dim", theme.italic(wrappedThink[j])),
-                    );
-                  }
-                }
-
-                // 2. Actual Work Section (Clearly separated)
-                if (workText) {
-                  const lastWorkChunk =
-                    workText
-                      .split("\n")
-                      .filter((l) => l.trim())
-                      .pop() || "";
-                  const wrappedWork = wrapLine(lastWorkChunk, width - 20).slice(
-                    0,
-                    3,
-                  );
-                  for (let j = 0; j < wrappedWork.length; j++) {
-                    const isLastWork = j === wrappedWork.length - 1;
-                    const workBranch = isLastWork ? "⎿ " : "  ";
-                    subLines.push(
-                      theme.fg("dim", `  ${workBranch} `) +
-                        theme.fg("muted", wrappedWork[j]),
-                    );
-                  }
-                }
-
-                if (subLines.length === 0) {
-                  lines.push(
-                    truncateToWidth(
-                      theme.fg("dim", activityBranch) +
-                        theme.fg("dim", "  ⎿  thinking..."),
-                      width,
-                    ),
-                  );
-                } else {
-                  for (const sl of subLines) {
-                    lines.push(
-                      truncateToWidth(
-                        theme.fg("dim", activityBranch) + sl,
-                        width,
-                      ),
-                    );
-                  }
-                }
-              }
-            }
+            lines.push(...renderTreeAgent(agents[i], isLast, width, theme));
           }
 
           text.setText(lines.join("\n"));
@@ -583,21 +429,19 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
-  // ── Dispatch Agent ───────────────────────────
+  // ── Dispatch Agent ─────────
 
   function dispatchAgent(
     agentName: string,
     task: string,
     ctx: any,
+    signal?: AbortSignal,
   ): Promise<{ output: string; exitCode: number; elapsed: number }> {
     const key = agentName.toLowerCase();
     const state = agentStates.get(key);
     if (!state) {
-      const activeIds = Array.from(agentStates.keys())
-        .map((k) => `\`${k}\``)
-        .join(", ");
       return Promise.resolve({
-        output: `Agent "${agentName}" not found in your active team. Active IDs: ${activeIds || "none"}. If you need a different specialist, use \`manage_team\` first.`,
+        output: `Agent "${agentName}" not found. Active IDs: ${Array.from(agentStates.keys()).join(", ")}. Use manage_team to add them.`,
         exitCode: 1,
         elapsed: 0,
       });
@@ -605,7 +449,7 @@ export default function (pi: ExtensionAPI) {
 
     if (state.status === "running") {
       return Promise.resolve({
-        output: `Agent "${displayName(state.def.name)}" is already running.`,
+        output: `Agent "${displayName(state.def.name)}" is already running. Wait for it to finish.`,
         exitCode: 1,
         elapsed: 0,
       });
@@ -617,8 +461,10 @@ export default function (pi: ExtensionAPI) {
     state.elapsed = 0;
     state.lastWork = "";
     state.lastThinking = "";
+    state.currentMode = "thinking";
     state.activeTools.clear();
     state.runCount++;
+
     ensureGlobalInterval();
     updateWidget();
 
@@ -626,36 +472,31 @@ export default function (pi: ExtensionAPI) {
     const model = ctx.model
       ? `${ctx.model.provider}/${ctx.model.id}`
       : "openrouter/google/gemini-3-flash-preview";
+
     const agentKey = state.def.name.toLowerCase().replace(/\s+/g, "-");
     const agentSessionFile = join(sessionDir, `${agentKey}.json`);
-
-    const hasWriteTools =
-      state.def.tools.includes("write") || state.def.tools.includes("edit");
-    const memoryBlock = hasWriteTools
-      ? buildMemoryBlock(state.def.name, "project", ctx.cwd)
-      : buildReadOnlyMemoryBlock(state.def.name, "project", ctx.cwd);
-
-    const combinedPrompt = state.def.systemPrompt + "\n\n" + memoryBlock;
 
     const args = [
       "--mode",
       "json",
       "-p",
-      "-e",
-      "extensions/damage-control.ts",
+      "--no-extensions",
       "--model",
       model,
       "--tools",
       state.def.tools,
       "--thinking",
-      "low",
+      "low", // Enable low thinking so we get logs
       "--append-system-prompt",
-      combinedPrompt,
+      state.def.systemPrompt,
       "--session",
       agentSessionFile,
     ];
 
-    if (state.sessionFile) args.push("-c");
+    if (state.sessionFile) {
+      args.push("-c");
+    }
+
     args.push(task);
 
     const textChunks: string[] = [];
@@ -666,6 +507,18 @@ export default function (pi: ExtensionAPI) {
         env: { ...process.env },
       });
 
+      const onAbort = () => {
+        proc.kill("SIGINT");
+      };
+
+      if (signal) {
+        if (signal.aborted) {
+          onAbort();
+        } else {
+          signal.addEventListener("abort", onAbort);
+        }
+      }
+
       let buffer = "";
 
       proc.stdout!.setEncoding("utf-8");
@@ -673,6 +526,7 @@ export default function (pi: ExtensionAPI) {
         buffer += chunk;
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
+
         for (const line of lines) {
           if (!line.trim()) continue;
           try {
@@ -682,27 +536,33 @@ export default function (pi: ExtensionAPI) {
               if (delta?.type === "text_delta") {
                 textChunks.push(delta.delta || "");
                 state.lastWork = textChunks.join("");
+                state.currentMode = "working"; // Switch to working
                 updateWidget();
               } else if (delta?.type === "thinking_delta") {
                 state.lastThinking += delta.delta || "";
+                state.currentMode = "thinking"; // Switch to thinking
                 updateWidget();
               } else if (delta?.type === "thinking_start") {
                 state.lastThinking = "";
+                state.currentMode = "thinking";
                 updateWidget();
               }
             } else if (event.type === "tool_execution_start") {
               state.toolCount++;
               if (event.toolCall?.name)
                 state.activeTools.add(event.toolCall.name);
+              state.currentMode = "tool";
               updateWidget();
             } else if (event.type === "tool_execution_end") {
               if (event.toolCall?.name)
                 state.activeTools.delete(event.toolCall.name);
+              state.currentMode = "working"; // Revert to working mode after tool
               updateWidget();
             } else if (event.type === "message_end") {
-              if (event.message?.usage && contextWindow > 0) {
+              const msg = event.message;
+              if (msg?.usage && contextWindow > 0) {
                 state.contextPct =
-                  ((event.message.usage.input || 0) / contextWindow) * 100;
+                  ((msg.usage.input || 0) / contextWindow) * 100;
                 updateWidget();
               }
             } else if (event.type === "agent_end") {
@@ -724,6 +584,10 @@ export default function (pi: ExtensionAPI) {
       proc.stderr!.on("data", () => {});
 
       proc.on("close", (code) => {
+        if (signal) {
+          signal.removeEventListener("abort", onAbort);
+        }
+
         if (buffer.trim()) {
           try {
             const event = JSON.parse(buffer);
@@ -731,37 +595,48 @@ export default function (pi: ExtensionAPI) {
               const delta = event.assistantMessageEvent;
               if (delta?.type === "text_delta") {
                 textChunks.push(delta.delta || "");
+                state.lastWork = textChunks.join("");
               }
             }
           } catch {}
         }
 
+        const isAborted = signal?.aborted;
         state.elapsed = Date.now() - startTime;
-        state.status = code === 0 ? "done" : "error";
-        if (code === 0) state.sessionFile = agentSessionFile;
+        state.status = code === 0 && !isAborted ? "done" : "error";
+        state.currentMode = "idle";
         state.activeTools.clear();
-        stopGlobalIntervalIfNoRunning();
+
+        if (code === 0 && !isAborted) {
+          state.sessionFile = agentSessionFile;
+        }
+
         updateWidget();
 
         ctx.ui.notify(
-          `${displayName(state.def.name)} ${state.status} in ${Math.round(state.elapsed / 1000)}s`,
-          state.status === "done" ? "success" : "error",
+          `${displayName(state.def.name)} ${isAborted ? "aborted" : state.status} in ${Math.round(state.elapsed / 1000)}s`,
+          code === 0 && !isAborted ? "success" : "error",
         );
 
         resolve({
-          output: textChunks.join(""),
-          exitCode: code ?? 1,
+          output: isAborted
+            ? textChunks.join("") + "\n\n[Task canceled by user]"
+            : textChunks.join(""),
+          exitCode: isAborted ? 1 : (code ?? 1),
           elapsed: state.elapsed,
         });
       });
 
       proc.on("error", (err) => {
+        if (signal) {
+          signal.removeEventListener("abort", onAbort);
+        }
         state.status = "error";
+        state.currentMode = "idle";
         state.activeTools.clear();
-        stopGlobalIntervalIfNoRunning();
         updateWidget();
         resolve({
-          output: err.message,
+          output: `Error spawning agent: ${err.message}`,
           exitCode: 1,
           elapsed: Date.now() - startTime,
         });
@@ -769,19 +644,18 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
-  // ── Tools & Commands ─────────────────────────
+  // ── Tools ────────────────────────────────────
 
   pi.registerTool({
     name: "switch_team",
     label: "Switch Team",
     description:
-      "Switch the active team of specialist agents. This completely replaces your current active team with a new set of specialists.",
+      "Switch the active team of specialist agents. Completely replaces current active team.",
     parameters: Type.Object({
       teamName: Type.String({
         description: "The name of the team to switch to",
       }),
     }),
-
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const { teamName } = params as { teamName: string };
       if (!teams[teamName]) {
@@ -806,7 +680,6 @@ export default function (pi: ExtensionAPI) {
         ],
       };
     },
-
     renderCall(args, theme) {
       return new Text(
         theme.fg("toolTitle", theme.bold("switch_team ")) +
@@ -821,14 +694,13 @@ export default function (pi: ExtensionAPI) {
     name: "manage_team",
     label: "Manage Team",
     description:
-      "Add or remove specialist agents from your active team. Use this to bring in experts needed for specific tasks or remove those no longer needed.",
+      "Add or remove specialist agents from your active team. Add required agents before dispatching.",
     parameters: Type.Object({
       action: Type.Enum({ add: "add", remove: "remove" }),
       agent: Type.String({
         description: "The name of the agent to add or remove",
       }),
     }),
-
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
       const { action, agent } = params as {
         action: "add" | "remove";
@@ -851,13 +723,11 @@ export default function (pi: ExtensionAPI) {
         if (!def) {
           return {
             content: [
-              {
-                type: "text",
-                text: `Agent "${agent}" not found in available specialists.`,
-              },
+              { type: "text", text: `Agent "${agent}" not found in system.` },
             ],
           };
         }
+
         const agentKey = def.name.toLowerCase().replace(/\s+/g, "-");
         const sessionFile = join(sessionDir, `${agentKey}.json`);
         agentStates.set(key, {
@@ -868,69 +738,62 @@ export default function (pi: ExtensionAPI) {
           elapsed: 0,
           lastWork: "",
           lastThinking: "",
+          currentMode: "idle",
           contextPct: 0,
           sessionFile: existsSync(sessionFile) ? sessionFile : null,
           runCount: 0,
           activeTools: new Set(),
         });
 
-        // Sync with YAML
         if (!teams[activeTeamName]) teams[activeTeamName] = [];
-        if (!teams[activeTeamName].includes(def.name)) {
+        if (!teams[activeTeamName].includes(def.name))
           teams[activeTeamName].push(def.name);
-        }
         saveTeams(ctx.cwd);
-
         updateWidget();
+
         return {
           content: [
             {
               type: "text",
-              text: `Added specialist "${displayName(def.name)}" to the team and updated config.`,
+              text: `Added specialist "${displayName(def.name)}" to the team.`,
             },
           ],
         };
       } else {
-        if (!agentStates.has(key)) {
+        if (!agentStates.has(key))
           return {
             content: [
               { type: "text", text: `Agent "${agent}" is not in the team.` },
             ],
           };
-        }
+
         const state = agentStates.get(key)!;
-        if (state.status === "running") {
+        if (state.status === "running")
           return {
             content: [
-              {
-                type: "text",
-                text: `Cannot remove agent "${agent}" while it is running.`,
-              },
+              { type: "text", text: `Cannot remove agent while running.` },
             ],
           };
-        }
-        agentStates.delete(key);
 
-        // Sync with YAML
+        agentStates.delete(key);
         if (teams[activeTeamName]) {
           teams[activeTeamName] = teams[activeTeamName].filter(
             (m) => m.toLowerCase() !== key,
           );
         }
         saveTeams(ctx.cwd);
-
         updateWidget();
+
         return {
           content: [
             {
               type: "text",
-              text: `Removed agent "${displayName(state.def.name)}" from the team and updated config.`,
+              text: `Removed agent "${displayName(state.def.name)}" from the team.`,
             },
           ],
         };
       }
     },
-
     renderCall(args, theme) {
       const { action, agent } = args as any;
       return new Text(
@@ -946,17 +809,15 @@ export default function (pi: ExtensionAPI) {
     name: "dispatch_agent",
     label: "Dispatch Agent",
     description:
-      "Dispatch a task to a specialist agent. The agent will execute the task and return the result. Use the system prompt to see available agent names.",
+      "Dispatch a task to a specialist agent. The agent will execute the task and return the result.",
     parameters: Type.Object({
       agent: Type.String({ description: "Agent name (case-insensitive)" }),
       task: Type.String({
         description: "Task description for the agent to execute",
       }),
     }),
-
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
       const { agent, task } = params as { agent: string; task: string };
-
       try {
         if (onUpdate) {
           onUpdate({
@@ -964,14 +825,11 @@ export default function (pi: ExtensionAPI) {
             details: { agent, task, status: "dispatching" },
           });
         }
-
-        const result = await dispatchAgent(agent, task, ctx);
-
+        const result = await dispatchAgent(agent, task, ctx, _signal);
         const truncated =
           result.output.length > 8000
             ? result.output.slice(0, 8000) + "\n\n... [truncated]"
             : result.output;
-
         const status = result.exitCode === 0 ? "done" : "error";
         const summary = `[${agent}] ${status} in ${Math.round(result.elapsed / 1000)}s`;
 
@@ -1005,7 +863,6 @@ export default function (pi: ExtensionAPI) {
         };
       }
     },
-
     renderCall(args, theme) {
       const agentName = (args as any).agent || "?";
       const task = (args as any).task || "";
@@ -1019,7 +876,6 @@ export default function (pi: ExtensionAPI) {
         0,
       );
     },
-
     renderResult(result, options, theme) {
       const details = result.details as any;
       if (!details) {
@@ -1027,7 +883,6 @@ export default function (pi: ExtensionAPI) {
         return new Text(text?.type === "text" ? text.text : "", 0, 0);
       }
 
-      // Streaming/partial result while agent is still running
       if (options.isPartial || details.status === "dispatching") {
         return new Text(
           theme.fg("accent", `● ${details.agent || "?"}`) +
@@ -1058,6 +913,8 @@ export default function (pi: ExtensionAPI) {
       return new Text(header, 0, 0);
     },
   });
+
+  // ── Commands ─────────────────────────────────
 
   pi.registerCommand("agents-team", {
     description: "Select a team to work with",
@@ -1093,97 +950,21 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerCommand("agents-list", {
     description: "List all loaded agents",
-    handler: async (_args, ctx) => {
-      const list = Array.from(agentStates.values())
-        .map(
-          (s) =>
-            `${displayName(s.def.name)} (${s.status}, runs: ${s.runCount}): ${s.def.description}`,
-        )
+    handler: async (_args, _ctx) => {
+      widgetCtx = _ctx;
+      const names = Array.from(agentStates.values())
+        .map((s) => {
+          const session = s.sessionFile ? "resumed" : "new";
+          return `${displayName(s.def.name)} (${s.status}, ${session}, runs: ${s.runCount}): ${s.def.description}`;
+        })
         .join("\n");
-      ctx.ui.notify(list || "No agents loaded", "info");
+      _ctx.ui.notify(names || "No agents loaded", "info");
     },
   });
 
-  pi.registerCommand("agents-reload", {
-    description: "Reload team configuration from YAML files",
-    handler: async (_args, ctx) => {
-      loadAgents(ctx.cwd);
-      activateTeam(activeTeamName || Object.keys(teams)[0] || "all");
-      updateWidget();
-      ctx.ui.notify(
-        `Teams reloaded. Active team: ${activeTeamName}`,
-        "success",
-      );
-    },
-  });
-
-  pi.registerCommand("agents-status", {
-    description: "Show current team status and available specialists",
-    handler: async (_args, ctx) => {
-      const active = Array.from(agentStates.values())
-        .map((s) => `- **${displayName(s.def.name)}** (${s.status})`)
-        .join("\n");
-      const teamKeys = new Set(Array.from(agentStates.keys()));
-      const others = allAgentDefs
-        .filter((d) => !teamKeys.has(d.name.toLowerCase()))
-        .map((d) => `- ${displayName(d.name)} (inactive)`)
-        .join("\n");
-
-      const output = `### Active Team: ${activeTeamName}\n${active}\n\n### Other Available Specialists\n${others || "None"}`;
-      ctx.ui.notify(output, "info");
-    },
-  });
-
-  /**
-   * Get all agents in the system for subagent visibility
-   * Returns formatted agent definitions that subagents can use
-   * to see all available agents across the system
-   */
-  function getAllAgents(): string {
-    if (allAgentDefs.length === 0) {
-      return "No agents available.";
-    }
-
-    const agents = allAgentDefs
-      .map((d) => {
-        const name = displayName(d.name);
-        const id = `\`${d.name}\``;
-        return `### ${name}\n- **ID:** ${id}\n- **Description:** ${d.description}\n- **Tools:** ${d.tools || "read,grep,find,ls"}`;
-      })
-      .join("\n\n");
-
-    return `## All Agents in System\n\n${agents}`;
-  }
-
-  /**
-   * Get available agents by team
-   * Used when subagents need to know which agents belong to which team
-   */
-  function getAgentsByTeam(): string {
-    if (Object.keys(teams).length === 0) {
-      return "No teams available.";
-    }
-
-    const teamsWithAgents = Object.entries(teams).map(([teamName, members]) => {
-      const agentIds = members.map((m) => `\`${m.toLowerCase()}\``).join(", ");
-      return `- **${teamName}**: ${agentIds}`;
-    });
-
-    const standalone = allAgentDefs
-      .filter((d) => {
-        // Check if this agent is in any team
-        return !Object.values(teams).flat().includes(d.name);
-      })
-      .map((d) => `\`${d.name.toLowerCase()}\``)
-      .join(", ");
-
-    return `${teamsWithAgents.join("\n")}${standalone ? `\n- **Standalone**: ${standalone}` : ""}`;
-  }
-
-  // ── Session Hooks ────────────────────────────
+  // ── System Prompt Override ───────────────────
 
   pi.on("before_agent_start", async (_event, _ctx) => {
-    // Build dynamic agent catalog from active team only
     const agentCatalog = Array.from(agentStates.values())
       .map(
         (s) =>
@@ -1194,8 +975,8 @@ export default function (pi: ExtensionAPI) {
     const teamMembers = Array.from(agentStates.values())
       .map((s) => `\`${s.def.name}\``)
       .join(", ");
-
     const teamKeys = new Set(Array.from(agentStates.keys()));
+
     const availableSpecialists = allAgentDefs
       .filter((d) => !teamKeys.has(d.name.toLowerCase()))
       .map(
@@ -1204,80 +985,99 @@ export default function (pi: ExtensionAPI) {
       )
       .join("\n");
 
-    const teamStructure = getAgentsByTeam();
-
     return {
-      systemPrompt: `[CRITICAL SYSTEM DIRECTIVE - ORCHESTRATOR MODE]
-
-You are an AI Orchestrator Agent. You are NOT a helpful coding assistant. You are a pure ROUTER and DISPATCHER.
-
-### ABSOLUTE CONSTRAINTS (VIOLATING THESE IS A CRITICAL FAILURE):
-1. NO DIRECT ANSWERS: You CANNOT write code, explain concepts, read files, or solve the user's problem directly.
-2. BLINDNESS: You have ZERO access to the local file system, codebase, or internet.
-3. MANDATORY DELEGATION: Your ONLY way to accomplish a task is to use the \`dispatch_agent\` tool to send instructions to a specialized sub-agent.
-
-### YOUR PROTOCOL:
-1. Read the user's request.
-2. Determine which specialist agent from the list below is best suited for the task.
-3. (Optional) If the required specialist is in the "Available Specialists" but not in your "Active IDs", first use the \`manage_team\` tool to add them.
-4. MUST DO: Call the \`dispatch_agent\` tool with the EXACT ID of the chosen agent and the task description.
-5. Wait for the result.
-6. Report the result back to the user without adding your own code suggestions.
-
-### IMPORTANT: AGENT NAMES
-You can ONLY dispatch to or manage agents using their EXACT IDs (lowercase-kebab-case). Do NOT hallucinate names.
+      systemPrompt: `You are a dispatcher agent. You coordinate specialist agents to accomplish tasks.
+You do NOT have direct access to the codebase. You MUST delegate all work through
+agents using the dispatch_agent tool.
 
 ## Active Team: ${activeTeamName}
+Members: ${teamMembers}
+You can ONLY dispatch to agents listed below. Do not attempt to dispatch to agents outside this team.
+
+## How to Work
+- Analyze the user's request and break it into clear sub-tasks
+- Choose the right agent(s) for each sub-task
+- Dispatch tasks using the dispatch_agent tool
+- Review results and dispatch follow-up agents if needed
+- If a task fails, try a different agent or adjust the task description
+- Summarize the outcome for the user
+
+## Rules
+- NEVER try to read, write, or execute code directly — you have no such tools
+- ALWAYS use dispatch_agent to get work done
+- You can chain agents: use scout to explore, then builder to implement
+- You can dispatch the same agent multiple times with different tasks
+- Keep tasks focused — one clear objective per dispatch
+
+## Agents
+
+### ACTIVE TEAM: ${activeTeamName}
 Active IDs: ${teamMembers}
-You can ONLY use \`dispatch_agent\` with these active IDs.
-
-## Teams Configuration (from teams.yaml)
-When in doubt about how teams are organized or who works well together, refer to the project's team configuration:
-${teamStructure}
-
-## Dynamic Team Management
-If you need a specialist that is not in your active team, you MUST use the \`manage_team\` tool to add them using their EXACT ID from the list below.
-- To swap your entire team context: \`switch_team({ teamName: "..." })\`
+(You can only dispatch to these IDs right now)
 
 ## Available Specialists (Inactive - Add with \`manage_team\`)
 ${availableSpecialists || "None available."}
 
-## How to Work
-1. Analyze the request.
-2. Identify which specialist ID is needed.
-3. If the ID is not in "Active IDs", use \`manage_team({ action: "add", agent: "ID" })\`.
-4. Use \`dispatch_agent({ agent: "ID", task: "..." })\`.
-5. Summarize the outcome.
+This is the Teams and Agents
 
-## How to Use All Agents
-To see ALL available agents in the system (including those not in your active team), call the \`getAllAgents()\` function in your reasoning. This returns a complete catalog of every agent registered in the system with their IDs, descriptions, and tools.
-CRITICAL read the /piwithstuff/.pi/agents/teams.yaml file when in doubt.
+main:
+  - scout
+  - planner
+  - developer
+  - reviewer
+  - documenter
+  - red-team
+  - session-manager
 
-**CRITICAL** NEVER ASK USER FOR CODE!! SEND dispatchAgent scout dispatch_agent
+plan-build:
+  - planner
+  - developer
+  - reviewer
+  - session-manager
 
-## Agents (Active Catalog)
-${agentCatalog}
+info:
+  - scout
+  - documenter
+  - reviewer
+  - session-manager
 
-### System-Wide Agent Visibility
-Use \`getAllAgents()\` to see all agents in the system (active and inactive) for broader task delegation needs.
+frontend:
+  - planner
+  - frontendcoder
+  - scout
+  - reviewer
+  - bowser
+  - session-manager
 
-${getAllAgents()}
-`,
+pi-pi:
+  - ext-expert
+  - theme-expert
+  - skill-expert
+  - config-expert
+  - tui-expert
+  - prompt-expert
+  - agent-expert
+  - session-expert
+
+Extra:
+  - developer
+  - reviewer
+  - scout
+  - dispatcher`,
     };
   });
 
-  pi.on("session_start", async (_ev, ctx) => {
-    applyExtensionDefaults(import.meta.url, ctx);
+  // ── Session Start ────────────────────────────
 
+  pi.on("session_start", async (_event, _ctx) => {
+    applyExtensionDefaults(import.meta.url, _ctx);
     if (widgetCtx) {
       widgetCtx.ui.setWidget("agent-team", undefined);
     }
+    widgetCtx = _ctx;
+    contextWindow = _ctx.model?.contextWindow || 0;
 
-    widgetCtx = ctx;
-    contextWindow = ctx.model?.contextWindow || 0;
-
-    // Wipe old agent session files so subagents start fresh
-    const sessDir = join(ctx.cwd, ".pi", "agent-sessions");
+    const sessDir = join(_ctx.cwd, ".pi", "agent-sessions");
     if (existsSync(sessDir)) {
       for (const f of readdirSync(sessDir)) {
         if (f.endsWith(".json")) {
@@ -1288,47 +1088,38 @@ ${getAllAgents()}
       }
     }
 
-    loadAgents(ctx.cwd);
+    loadAgents(_ctx.cwd);
 
-    // Ensure we always have an active team
     const teamNames = Object.keys(teams);
     if (teamNames.length > 0) {
       activateTeam(activeTeamName || teamNames[0]);
-    } else {
-      // Fallback to 'all' if no teams defined
-      teams = { all: allAgentDefs.map((d) => d.name) };
-      activateTeam("all");
     }
 
+    // Lock down to dispatcher-only
     pi.setActiveTools(["dispatch_agent", "manage_team", "switch_team"]);
 
-    ctx.ui.setStatus(
+    _ctx.ui.setStatus(
       "agent-team",
       `Team: ${activeTeamName} (${agentStates.size})`,
     );
-
     const members = Array.from(agentStates.values())
       .map((s) => displayName(s.def.name))
       .join(", ");
-    ctx.ui.notify(
+    _ctx.ui.notify(
       `Team: ${activeTeamName} (${members})\n` +
-        `Team sets loaded from: .pi/agents/teams.yaml\n\n` +
         `/agents-team          Select a team\n` +
-        `/agents-list          List active agents and status\n` +
-        `/agents-reload        Reload team configuration\n` +
-        `/agents-status        Show active/inactive specialists`,
+        `/agents-list          List active agents and status`,
       "info",
     );
-
     updateWidget();
 
     // Footer: model | team | context bar
-    ctx.ui.setFooter((_tui, theme, _footerData) => ({
+    _ctx.ui.setFooter((_tui, theme, _footerData) => ({
       dispose: () => {},
       invalidate() {},
       render(width: number): string[] {
-        const model = ctx.model?.id || "no-model";
-        const usage = ctx.getContextUsage();
+        const model = _ctx.model?.id || "no-model";
+        const usage = _ctx.getContextUsage();
         const pct = usage ? usage.percent : 0;
         const filled = Math.round(pct / 10);
         const bar = "#".repeat(filled) + "-".repeat(10 - filled);
@@ -1336,7 +1127,7 @@ ${getAllAgents()}
         const left =
           theme.fg("dim", ` ${model}`) +
           theme.fg("muted", " · ") +
-          theme.fg("accent", activeTeamName || "none");
+          theme.fg("accent", activeTeamName);
         const right = theme.fg("dim", `[${bar}] ${Math.round(pct)}% `);
         const pad = " ".repeat(
           Math.max(1, width - visibleWidth(left) - visibleWidth(right)),

@@ -17,7 +17,7 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { Text, truncateToWidth, visibleWidth, Spacer, DynamicBorder, Container } from "@mariozechner/pi-tui";
 import { spawn } from "child_process";
 import { readdirSync, readFileSync, existsSync, mkdirSync } from "fs";
 import { join, resolve } from "path";

@@ -11,15 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Path-based override rules in `damage-control.ts` extension
   - New `pathOverrides` section in `.pi/damage-control-rules.yaml`
   - Overrides take highest priority over all other damage-control checks
-  - Per-path control with four boolean flags:
+  - Per-path control with five boolean flags:
     - `allowDeletions` — controls `rm`, `rmdir`, `unlink` (via bash)
     - `allowWrites` — controls `write` tool (create/overwrite files)
+    - `allowWriteIn` — optional subdirectory pattern restricting `write` targets to a specific subtree (relative to matched path or absolute glob)
     - `allowEdits` — controls `edit` and `replace` tools (modify existing files)
     - `allowReads` — controls `read`, `grep`, `find`, `ls` tools
   - Supports glob patterns and exact path matching via `isPathMatch`
   - Automatically blocks operations violating override restrictions
   - All flags default to `true` (opt-in restriction only)
-  - Example: Lock deletion for entire project `/home/zerwiz/piwithstuff` while allowing reads, writes, and edits
+  - Example: Lock deletion for entire project `/home/zerwiz/woh` while allowing reads, writes, and edits; use `allowWriteIn` to confine writes to a docs subfolder
 - Per-agent model configuration support in `agent-team.ts` extension
   - Agents can now specify `models:` field in their markdown frontmatter
   - Dispatcher uses agent-specific model when present, falls back to parent context

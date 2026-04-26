@@ -35,7 +35,7 @@ ext-tool-counter-widget:
 
 # 8. Subagent widget: /sub <task> with live streaming progress
 ext-subagent-widget:
-    pi -e extensions/subagent-widget.ts -e extensions/pure-focus.ts -e extensions/theme-cycler.ts
+    pi -e extensions/subagent-widget.ts -e extensions/theme-cycler.ts -e extensions/pure-focus.ts
 
 # 9. TillDone: task-driven discipline — define tasks before working
 ext-tilldone:

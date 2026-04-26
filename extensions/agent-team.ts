@@ -574,7 +574,7 @@ export default function (pi: ExtensionAPI) {
    * STICK-TO-BOTTOM: Team status line is the last item in the array.
    * DYNAMIC TOP: The list grows upwards into the scrollback as needed.
    */
-  function updateWidget() {
+function updateWidget() {
     if (!widgetCtx) return;
 
     widgetCtx.ui.setWidget("agent-team", (_tui: any, theme: any) => {
@@ -586,24 +586,23 @@ export default function (pi: ExtensionAPI) {
           const running = Array.from(agentStates.values()).some(s => s.status === "running");
           const safeWidth = Math.max(10, width - 2);
 
-          const agents = Array.from(agentStates.values());
           const lines: string[] = [];
-          
-          // Assemble specialist blocks top-to-bottom
-          for (let i = 0; i < agents.length; i++) {
-            // All agents use ├─ because the headingLine at the end is the final └─
-            lines.push(...renderTreeAgent(agents[i], false, width, theme));
-          }
 
-          // Team Dashboard Footer (Sticks to Prompt)
+          // Team Dashboard Header (Sticks to Top - orchestrator is the root)
           const headingLine = truncateToWidth(
-            theme.fg(running ? "accent" : "dim", "└─") + " " +
+            theme.fg(running ? "accent" : "dim", "├─") + " " +
             theme.fg(running ? "accent" : "dim", running ? "●" : "○") + " " +
             theme.fg(running ? "accent" : "dim", `Team Orchestrator Context: ${activeTeamName}`),
             safeWidth
           );
-          
           lines.push(headingLine);
+
+          // Assemble specialist blocks beneath the orchestrator (last gets └─)
+          const agents = Array.from(agentStates.values());
+          for (let i = 0; i < agents.length; i++) {
+            const isLast = i === agents.length - 1;
+            lines.push(...renderTreeAgent(agents[i], isLast, width, theme));
+          }
 
           text.setText(lines.join("\n"));
           return text.render(width);
@@ -654,7 +653,7 @@ export default function (pi: ExtensionAPI) {
       : buildReadOnlyMemoryBlock(state.def.name, "project", ctx.cwd);
 
     const args = [
-      "--mode", "json", "-p", "-e", "extensions/damage-control.ts",
+      "--mode", "json", "-p",
       "--model", model,
       "--tools", state.def.tools,
       "--thinking", "low",
@@ -847,6 +846,69 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerTool({
+    name: "list_team_agents",
+    label: "List Team Agents",
+    description: "List all agents in the active team with their tools.",
+    parameters: Type.Object({}),
+    async execute(_id, _params, _sig, _upd, _ctx) {
+      const members = Array.from(agentStates.values()).map(s => {
+        const model = s.def.model ? ` (${s.def.model})` : "";
+        return `### ${s.def.name}${model}\n- **Tools:** ${s.def.tools}\n- **Status:** ${s.status}`;
+      }).join("\n\n");
+      return { 
+        content: [{ 
+          type: "text", 
+          text: `### Active Team: ${activeTeamName}\n\n${members || "No agents loaded."}` 
+        }] 
+      };
+    },
+    renderCall: (_args, theme) =>
+      new Text(theme.fg("toolTitle", theme.bold("list_team_agents")) + theme.fg("dim", " (show active team)"), 0, 0),
+  });
+
+  pi.registerTool({
+    name: "save_memory",
+    label: "Save Memory",
+    description: "Save notes to your persistent memory file.",
+    parameters: Type.Object({
+      note: Type.String({ description: "Content to append to MEMORY.md" }),
+    }),
+    async execute(id, params, _sig, _upd, ctx) {
+      const agentKey = id.toLowerCase();
+      const state = agentStates.get(agentKey);
+      if (!state) return { content: [{ type: "text", text: `Agent not found.` }] };
+      
+      const hasWriteTools = state.def.tools.includes("write") || state.def.tools.includes("edit");
+      if (!hasWriteTools) return { content: [{ type: "text", text: `This agent does not have write tools.` }] };
+      
+      const { note } = params as { note: string };
+      const memoryDir = resolveMemoryDir(state.def.name, "project", ctx.cwd);
+      ensureMemoryDir(memoryDir);
+      const memoryFile = join(memoryDir, "MEMORY.md");
+      
+      const existing = safeReadFile(memoryFile) || "";
+      const timestamp = new Date().toISOString().slice(0, 10);
+      const entry = `\n\n## ${timestamp}\n${note}`;
+      const updated = existing + entry;
+      
+      try {
+        writeFileSync(memoryFile, updated, "utf-8");
+        return { content: [{ type: "text", text: `Memory saved to ${memoryFile}` }] };
+      } catch (e) {
+        return { content: [{ type: "text", text: `Failed to save memory: ${e}` }] };
+      }
+    },
+    renderCall: (args, theme) => {
+      const note = (args as any).note || "";
+      const preview = note.length > 30 ? note.slice(0, 27) + "..." : note;
+      return new Text(
+        theme.fg("toolTitle", theme.bold("save_memory ")) + theme.fg("dim", preview),
+        0, 0
+      );
+    },
+  });
+
   // ── Commands ─────────────────────────────────
 
   pi.registerCommand("agents-team", {
@@ -927,19 +989,12 @@ ${fullCatalog}
     widgetCtx = ctx;
     contextWindow = ctx.model?.contextWindow || 0;
     
-    const sessDir = join(ctx.cwd, ".pi", "agent-sessions");
-    if (existsSync(sessDir)) {
-      for (const f of readdirSync(sessDir)) {
-        if (f.endsWith(".json")) try { unlinkSync(join(sessDir, f)); } catch {}
-      }
-    }
-    
     loadAgents(ctx.cwd);
     if (Object.keys(teams).length > 0) {
       activateTeam(activeTeamName || Object.keys(teams)[0]);
     }
     
-    pi.setActiveTools(["dispatch_agent", "manage_team", "switch_team"]);
+    pi.setActiveTools(["dispatch_agent", "manage_team", "switch_team", "list_team_agents", "save_memory"]);
     updateWidget();
     
     ctx.ui.setFooter((_tui, theme) => ({
