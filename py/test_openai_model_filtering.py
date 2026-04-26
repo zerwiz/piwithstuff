@@ -8,60 +8,29 @@ Tests both scenarios:
 """
 
 import sys
-sys.path.insert(0, '/home/zerwiz/piwithstuff')
+
+sys.path.insert(0, "/home/zerwiz/piwithstuff/py")
 
 import models
-from model_resolver import filter_openai_models, update_model_list_for_openai_hiding, is_openai_model
+from model_resolver import (
+    filter_openai_models,
+    is_openai_model,
+    update_model_list_for_openai_hiding,
+)
 
 TEST_MODELS_WITH_OPENAI = [
-    {
-        "name": "llama3",
-        "id": "",
-        "availability": "available"
-    },
-    {
-        "name": "openai/chatgpt-4o",
-        "id": "",
-        "availability": "available"
-    },
-    {
-        "name": "gpt-4",
-        "id": "",
-        "availability": "available"
-    },
-    {
-        "name": "mixtral8x7b",
-        "id": "",
-        "availability": "available"
-    },
-    {
-        "name": "some-random-model-openai",
-        "id": "",
-        "availability": "available"
-    },
-    {
-        "name": "not-found-model",
-        "id": "",
-        "availability": "not found"
-    },
+    {"name": "llama3", "id": "", "availability": "available"},
+    {"name": "openai/chatgpt-4o", "id": "", "availability": "available"},
+    {"name": "gpt-4", "id": "", "availability": "available"},
+    {"name": "mixtral8x7b", "id": "", "availability": "available"},
+    {"name": "some-random-model-openai", "id": "", "availability": "available"},
+    {"name": "not-found-model", "id": "", "availability": "not found"},
 ]
 
 TEST_MODELS_WITHOUT_OPENAI = [
-    {
-        "name": "llama3",
-        "id": "",
-        "availability": "available"
-    },
-    {
-        "name": "mixtral8x7b",
-        "id": "",
-        "availability": "available"
-    },
-    {
-        "name": "not-found-model",
-        "id": "",
-        "availability": "not found"
-    },
+    {"name": "llama3", "id": "", "availability": "available"},
+    {"name": "mixtral8x7b", "id": "", "availability": "available"},
+    {"name": "not-found-model", "id": "", "availability": "not found"},
 ]
 
 print("=" * 60)
@@ -72,8 +41,7 @@ print("=" * 60)
 print("\n1. Testing filter_openai_models() with models containing OpenAI models:")
 print("-" * 60)
 filtered, filtered_names, rejected = filter_openai_models(
-    TEST_MODELS_WITH_OPENAI,
-    [m["name"] for m in TEST_MODELS_WITH_OPENAI]
+    TEST_MODELS_WITH_OPENAI, [m["name"] for m in TEST_MODELS_WITH_OPENAI]
 )
 
 print(f"Original models (with OpenAI):")
@@ -82,7 +50,11 @@ for m in TEST_MODELS_WITH_OPENAI:
 
 print(f"\nFiltered models (OpenAI removed):")
 for m in filtered:
-    status = "OPENAI" if m.get("availability") == "not found" else f"AVAILABILITY: {m.get('availability', 'unknown')}"
+    status = (
+        "OPENAI"
+        if m.get("availability") == "not found"
+        else f"AVAILABILITY: {m.get('availability', 'unknown')}"
+    )
     print(f"  {m['name']:30s} | {status}")
     print(f"     ID: {m.get('id', 'N/A')}")
 
@@ -107,8 +79,12 @@ expected_rejected_count = len(expected_rejected)
 remaining_pass = remaining_count == expected_remaining_count == len(expected_remaining)
 rejected_pass = rejected_count == expected_rejected_count == len(expected_rejected)
 
-print(f"  Expected remaining: {expected_remaining_count}, Actual: {remaining_count} -> {'PASS' if remaining_pass else 'FAIL'}")
-print(f"  Expected rejected: {expected_rejected_count}, Actual: {rejected_count} -> {'PASS' if rejected_pass else 'FAIL'}")
+print(
+    f"  Expected remaining: {expected_remaining_count}, Actual: {remaining_count} -> {'PASS' if remaining_pass else 'FAIL'}"
+)
+print(
+    f"  Expected rejected: {expected_rejected_count}, Actual: {rejected_count} -> {'PASS' if rejected_pass else 'FAIL'}"
+)
 
 if remaining_pass and rejected_pass:
     print(f"\n✓ Test 1 PASSED: OpenAI models filtered out correctly!")
@@ -121,8 +97,7 @@ print("\n2. Testing with models WITHOUT OpenAI (should pass through):")
 print("-" * 60)
 
 filtered2, filtered_names2, rejected2 = filter_openai_models(
-    TEST_MODELS_WITHOUT_OPENAI,
-    [m["name"] for m in TEST_MODELS_WITHOUT_OPENAI]
+    TEST_MODELS_WITHOUT_OPENAI, [m["name"] for m in TEST_MODELS_WITHOUT_OPENAI]
 )
 
 print(f"Input models:")
@@ -151,7 +126,11 @@ else:
 print("\n" + "=" * 60)
 print("\n3. Current MODEL_NAMES from models.py module:")
 print("-" * 60)
+import sys
+
+sys.path.insert(0, "/home/zerwiz/piwithstuff/py")
 import models
+
 print(f"[{', '.join(models.MODEL_NAMES)}]")
 
 # Test 3: Check MODEL_NAMES for OpenAI patterns
@@ -168,7 +147,7 @@ print("\n" + "=" * 60)
 print("\nAll tests complete!")
 print("=" * 60)
 
-'''
+"""
 TEST OUTPUT:
 
 ============================================================
@@ -238,4 +217,4 @@ Checking for OpenAI patterns in MODEL_NAMES:
 
 All tests complete!
 ============================================================
-'''
+"""
