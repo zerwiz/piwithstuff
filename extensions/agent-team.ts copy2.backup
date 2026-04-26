@@ -9,8 +9,8 @@
  * Teams are defined in .pi/agents/teams.yaml.
  *
  * Commands:
- * /agents-team          — switch active team
- * /agents-list          — list loaded agents
+ *   /agents-team          — switch active team
+ *   /agents-list          — list loaded agents
  *
  * Usage: pi -e extensions/agent-team.ts
  */
@@ -374,19 +374,8 @@ export default function (pi: ExtensionAPI) {
 
   function ensureGlobalInterval() {
     if (globalInterval) return;
-    let lastTick = Date.now();
     globalInterval = setInterval(() => {
-      const now = Date.now();
-      const delta = now - lastTick;
-      lastTick = now;
       widgetFrame++;
-
-      for (const state of agentStates.values()) {
-        if (state.status === "running") {
-          state.elapsed += delta;
-        }
-      }
-
       updateWidget();
     }, 80);
   }
@@ -677,6 +666,7 @@ export default function (pi: ExtensionAPI) {
           if (!line.trim()) continue;
           try {
             const event = JSON.parse(line);
+            state.elapsed = Date.now() - startTime;
             if (event.type === "message_update") {
               const delta = event.assistantMessageEvent;
               if (delta?.type === "text_delta") {
@@ -705,49 +695,18 @@ export default function (pi: ExtensionAPI) {
                   ((event.message.usage.input || 0) / contextWindow) * 100;
                 updateWidget();
               }
-            } else if (event.type === "agent_end") {
-              const msgs = event.messages || [];
-              const last = [...msgs]
-                .reverse()
-                .find((m: any) => m.role === "assistant");
-              if (last?.usage && contextWindow > 0) {
-                state.contextPct =
-                  ((last.usage.input || 0) / contextWindow) * 100;
-                updateWidget();
-              }
             }
           } catch {}
         }
       });
 
-      proc.stderr!.setEncoding("utf-8");
-      proc.stderr!.on("data", () => {});
-
       proc.on("close", (code) => {
-        if (buffer.trim()) {
-          try {
-            const event = JSON.parse(buffer);
-            if (event.type === "message_update") {
-              const delta = event.assistantMessageEvent;
-              if (delta?.type === "text_delta") {
-                textChunks.push(delta.delta || "");
-              }
-            }
-          } catch {}
-        }
-
         state.elapsed = Date.now() - startTime;
         state.status = code === 0 ? "done" : "error";
         if (code === 0) state.sessionFile = agentSessionFile;
         state.activeTools.clear();
         stopGlobalIntervalIfNoRunning();
         updateWidget();
-
-        ctx.ui.notify(
-          `${displayName(state.def.name)} ${state.status} in ${Math.round(state.elapsed / 1000)}s`,
-          state.status === "done" ? "success" : "error",
-        );
-
         resolve({
           output: textChunks.join(""),
           exitCode: code ?? 1,
@@ -1134,52 +1093,6 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  /**
-   * Get all agents in the system for subagent visibility
-   * Returns formatted agent definitions that subagents can use
-   * to see all available agents across the system
-   */
-  function getAllAgents(): string {
-    if (allAgentDefs.length === 0) {
-      return "No agents available.";
-    }
-
-    const agents = allAgentDefs
-      .map((d) => {
-        const name = displayName(d.name);
-        const id = `\`${d.name}\``;
-        return `### ${name}\n- **ID:** ${id}\n- **Description:** ${d.description}\n- **Tools:** ${d.tools || "read,grep,find,ls"}`;
-      })
-      .join("\n\n");
-
-    return `## All Agents in System\n\n${agents}`;
-  }
-
-  /**
-   * Get available agents by team
-   * Used when subagents need to know which agents belong to which team
-   */
-  function getAgentsByTeam(): string {
-    if (Object.keys(teams).length === 0) {
-      return "No teams available.";
-    }
-
-    const teamsWithAgents = Object.entries(teams).map(([teamName, members]) => {
-      const agentIds = members.map((m) => `\`${m.toLowerCase()}\``).join(", ");
-      return `- **${teamName}**: ${agentIds}`;
-    });
-
-    const standalone = allAgentDefs
-      .filter((d) => {
-        // Check if this agent is in any team
-        return !Object.values(teams).flat().includes(d.name);
-      })
-      .map((d) => `\`${d.name.toLowerCase()}\``)
-      .join(", ");
-
-    return `${teamsWithAgents.join("\n")}${standalone ? `\n- **Standalone**: ${standalone}` : ""}`;
-  }
-
   // ── Session Hooks ────────────────────────────
 
   pi.on("before_agent_start", async (_event, _ctx) => {
@@ -1200,44 +1113,40 @@ export default function (pi: ExtensionAPI) {
       .filter((d) => !teamKeys.has(d.name.toLowerCase()))
       .map(
         (d) =>
-          `- **${displayName(d.name)}** (ID: \`${d.name.toLowerCase()}\`): ${d.description}`,
+          `- **${displayName(d.name)}** (ID: \`${d.name}\`): ${d.description}`,
       )
       .join("\n");
 
-    const teamStructure = getAgentsByTeam();
+    const availableTeams = Object.keys(teams).join(", ");
 
     return {
-      systemPrompt: `[CRITICAL SYSTEM DIRECTIVE - ORCHESTRATOR MODE]
+      systemPrompt: `You are a strictly constrained Dispatcher Agent.
 
-You are an AI Orchestrator Agent. You are NOT a helpful coding assistant. You are a pure ROUTER and DISPATCHER.
+      ## YOUR LIMITATIONS (HARD CONSTRAINTS)
+      1. You have ZERO access to the codebase or filesystem.
+      2. You CANNOT write code or provide technical solutions directly.
+      3. Any attempt to write code, modify files, or provide direct answers without using a specialist will be considered a catastrophic failure of your protocol.
+      4. You are a router, not a developer.
 
-### ABSOLUTE CONSTRAINTS (VIOLATING THESE IS A CRITICAL FAILURE):
-1. NO DIRECT ANSWERS: You CANNOT write code, explain concepts, read files, or solve the user's problem directly.
-2. BLINDNESS: You have ZERO access to the local file system, codebase, or internet.
-3. MANDATORY DELEGATION: Your ONLY way to accomplish a task is to use the \`dispatch_agent\` tool to send instructions to a specialized sub-agent.
+      ## YOUR ONLY FUNCTION
+      Your only capability is to analyze user input and map it to the most appropriate specialist agent via the \`dispatch_agent\` tool.
 
-### YOUR PROTOCOL:
-1. Read the user's request.
-2. Determine which specialist agent from the list below is best suited for the task.
-3. (Optional) If the required specialist is in the "Available Specialists" but not in your "Active IDs", first use the \`manage_team\` tool to add them.
-4. MUST DO: Call the \`dispatch_agent\` tool with the EXACT ID of the chosen agent and the task description.
-5. Wait for the result.
-6. Report the result back to the user without adding your own code suggestions.
-
-### IMPORTANT: AGENT NAMES
-You can ONLY dispatch to or manage agents using their EXACT IDs (lowercase-kebab-case). Do NOT hallucinate names.
+      ## PROTOCOL
+      1. Analyze the request.
+      2. If the request requires code, file analysis, or specialized knowledge, you MUST use \`dispatch_agent\`.
+      3. If the correct specialist is not in your "Active Team", use \`manage_team\` to add them first.
+      4. Do NOT attempt to answer the user yourself. Output ONLY the tool call.
 
 ## Active Team: ${activeTeamName}
 Active IDs: ${teamMembers}
 You can ONLY use \`dispatch_agent\` with these active IDs.
 
-## Teams Configuration (from teams.yaml)
-When in doubt about how teams are organized or who works well together, refer to the project's team configuration:
-${teamStructure}
-
 ## Dynamic Team Management
 If you need a specialist that is not in your active team, you MUST use the \`manage_team\` tool to add them using their EXACT ID from the list below.
 - To swap your entire team context: \`switch_team({ teamName: "..." })\`
+
+## Available Teams
+${availableTeams}
 
 ## Available Specialists (Inactive - Add with \`manage_team\`)
 ${availableSpecialists || "None available."}
@@ -1249,28 +1158,14 @@ ${availableSpecialists || "None available."}
 4. Use \`dispatch_agent({ agent: "ID", task: "..." })\`.
 5. Summarize the outcome.
 
-## How to Use All Agents
-To see ALL available agents in the system (including those not in your active team), call the \`getAllAgents()\` function in your reasoning. This returns a complete catalog of every agent registered in the system with their IDs, descriptions, and tools.
-CRITICAL read the /piwithstuff/.pi/agents/teams.yaml file when in doubt.
-
 ## Agents (Active Catalog)
-${agentCatalog}
 
-### System-Wide Agent Visibility
-Use \`getAllAgents()\` to see all agents in the system (active and inactive) for broader task delegation needs.
-
-${getAllAgents()}
-`,
+${agentCatalog}`,
     };
   });
 
   pi.on("session_start", async (_ev, ctx) => {
     applyExtensionDefaults(import.meta.url, ctx);
-
-    if (widgetCtx) {
-      widgetCtx.ui.setWidget("agent-team", undefined);
-    }
-
     widgetCtx = ctx;
     contextWindow = ctx.model?.contextWindow || 0;
 
@@ -1304,20 +1199,6 @@ ${getAllAgents()}
       "agent-team",
       `Team: ${activeTeamName} (${agentStates.size})`,
     );
-
-    const members = Array.from(agentStates.values())
-      .map((s) => displayName(s.def.name))
-      .join(", ");
-    ctx.ui.notify(
-      `Team: ${activeTeamName} (${members})\n` +
-        `Team sets loaded from: .pi/agents/teams.yaml\n\n` +
-        `/agents-team          Select a team\n` +
-        `/agents-list          List active agents and status\n` +
-        `/agents-reload        Reload team configuration\n` +
-        `/agents-status        Show active/inactive specialists`,
-      "info",
-    );
-
     updateWidget();
 
     // Footer: model | team | context bar
