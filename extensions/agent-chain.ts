@@ -518,6 +518,26 @@ export default function (pi: ExtensionAPI) {
 	// ── run_chain Tool ──────────────────────────
 
 	pi.registerTool({
+		name: "switch_chain",
+		label: "Switch Chain",
+		description: "Switch the active agent chain pipeline. This changes the sequence of agents and logic used for your tasks.",
+		parameters: Type.Object({
+			chainName: Type.String({ description: "The name of the chain to switch to" }),
+		}),
+
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const { chainName } = params as { chainName: string };
+			const chain = chains.find(c => c.name.toLowerCase() === chainName.toLowerCase());
+			if (!chain) {
+				return { content: [{ type: "text", text: `Chain "${chainName}" not found. Available chains: ${chains.map(c => c.name).join(", ")}` }] };
+			}
+			activateChain(chain);
+			ctx.ui.setStatus("agent-chain", `Chain: ${chain.name} (${chain.steps.length} steps)`);
+			return { content: [{ type: "text", text: `Switched to chain "${chain.name}". Flow: ${chain.steps.map(s => displayName(s.agent)).join(" → ")}` }] };
+		},
+	});
+
+	pi.registerTool({
 		name: "manage_team",
 		label: "Manage Team",
 		description: "Add or remove specialist agents from your active team. While chains have fixed steps, you can still bring in experts for direct delegation if needed.",
@@ -743,6 +763,8 @@ export default function (pi: ExtensionAPI) {
 			.map(d => `- **${displayName(d.name)}**: ${d.description}`)
 			.join("\n");
 
+		const availableChains = chains.map(c => c.name).join(", ");
+
 		return {
 			systemPrompt: `You are an agent with a sequential pipeline called "${activeChain.name}" at your disposal.${desc}
 You have full access to your own tools AND the run_chain tool to delegate to your team.
@@ -752,9 +774,14 @@ Flow: ${flow}
 
 ${steps}
 
-## Available Specialists (not in chain)
-If you need a specialist that is not in your current chain, you can use the \`manage_team\` tool to make them available for direct delegation.
+## Dynamic Pipeline Management
+- If you need a specialist that is not in your current chain, you can use the \`manage_team\` tool to make them available for direct delegation.
+- If you want to swap your entire sequential pipeline for a different workflow, use \`switch_chain\`.
 
+## Available Chains
+${availableChains}
+
+## Available Specialists (not in chain)
 ${availableSpecialists || "None available."}
 
 ## Agent Details
@@ -780,6 +807,7 @@ ${agentCatalog}
 
 ## Guidelines
 - Use your judgment — if it's quick, just do it; if it's real work, run the chain
+- Use switch_chain if the user's request aligns better with a different available workflow
 - Keep chain tasks focused and clearly described
 - You can mix direct work and chain runs in the same conversation`,
 		};

@@ -612,6 +612,34 @@ export default function (pi: ExtensionAPI) {
 	// ── Tools & Commands ─────────────────────────
 
 	pi.registerTool({
+		name: "switch_team",
+		label: "Switch Team",
+		description: "Switch the active team of specialist agents. This completely replaces your current active team with a new set of specialists.",
+		parameters: Type.Object({
+			teamName: Type.String({ description: "The name of the team to switch to" }),
+		}),
+
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const { teamName } = params as { teamName: string };
+			if (!teams[teamName]) {
+				return { content: [{ type: "text", text: `Team "${teamName}" not found. Available teams: ${Object.keys(teams).join(", ")}` }] };
+			}
+			activateTeam(teamName);
+			updateWidget();
+			ctx.ui.setStatus("agent-team", `Team: ${teamName} (${agentStates.size})`);
+			return { content: [{ type: "text", text: `Switched to team "${teamName}". Members: ${teams[teamName].join(", ")}` }] };
+		},
+
+		renderCall(args, theme) {
+			return new Text(
+				theme.fg("toolTitle", theme.bold("switch_team ")) +
+				theme.fg("accent", (args as any).teamName),
+				0, 0,
+			);
+		},
+	});
+
+	pi.registerTool({
 		name: "manage_team",
 		label: "Manage Team",
 		description: "Add or remove specialist agents from your active team. Use this to bring in experts needed for specific tasks or remove those no longer needed.",
@@ -845,6 +873,8 @@ export default function (pi: ExtensionAPI) {
 			.map(d => `- **${displayName(d.name)}**: ${d.description}`)
 			.join("\n");
 
+		const availableTeams = Object.keys(teams).join(", ");
+
 		return {
 			systemPrompt: `You are a dispatcher agent. You coordinate specialist agents to accomplish tasks.
 You do NOT have direct access to the codebase. You MUST delegate all work through
@@ -855,7 +885,11 @@ Members: ${teamMembers}
 You can ONLY dispatch to agents listed below.
 
 ## Dynamic Team Management
-If you need a specialist that is not in your active team, you can use the \`manage_team\` tool to add them.
+- If you need a specialist that is not in your active team, you can use \`manage_team\` to add them.
+- If you want to swap your entire team for a different context, use \`switch_team\`.
+
+## Available Teams
+${availableTeams}
 
 ## Available Specialists (not in team)
 ${availableSpecialists || "None available."}
@@ -864,7 +898,7 @@ ${availableSpecialists || "None available."}
 - Analyze the user's request and break it into clear sub-tasks
 - Choose the right agent(s) for each sub-task
 - Dispatch tasks using the dispatch_agent tool
-- Use manage_team to bring in experts if needed
+- Use manage_team or switch_team to bring in experts if needed
 - Review results and dispatch follow-up agents if needed
 - Summarize the outcome for the user
 
@@ -872,6 +906,7 @@ ${availableSpecialists || "None available."}
 - NEVER try to read, write, or execute code directly — you have no such tools
 - ALWAYS use dispatch_agent to get work done
 - Use manage_team tool to add/remove specialists as the project evolves
+- Use switch_team to pivot to a different team set entirely
 - You can chain agents: use scout to explore, then builder to implement
 - Keep tasks focused — one clear objective per dispatch
 
