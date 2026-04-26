@@ -28,6 +28,7 @@ import { spawn } from "child_process";
 import { readFileSync, existsSync, readdirSync, mkdirSync, unlinkSync } from "fs";
 import { join, resolve } from "path";
 import { applyExtensionDefaults } from "./themeMap.ts";
+import { buildMemoryBlock, buildReadOnlyMemoryBlock } from "./memory.ts";
 
 // ── Types ────────────────────────────────────────
 
@@ -342,6 +343,13 @@ export default function (pi: ExtensionAPI) {
 		const agentSessionFile = join(sessionDir, `chain-${agentKey}.json`);
 		const hasSession = agentSessions.get(agentKey);
 
+		const hasWriteTools = agentDef.tools.includes("write") || agentDef.tools.includes("edit") || agentDef.tools.includes("bash");
+		const memoryBlock = hasWriteTools
+			? buildMemoryBlock(agentDef.name, "project", ctx.cwd)
+			: buildReadOnlyMemoryBlock(agentDef.name, "project", ctx.cwd);
+
+		const combinedPrompt = agentDef.systemPrompt + "\n\n" + memoryBlock;
+
 		const args = [
 			"--mode", "json",
 			"-p",
@@ -349,7 +357,7 @@ export default function (pi: ExtensionAPI) {
 			"--model", model,
 			"--tools", agentDef.tools,
 			"--thinking", "off",
-			"--append-system-prompt", agentDef.systemPrompt,
+			"--append-system-prompt", combinedPrompt,
 			"--session", agentSessionFile,
 		];
 

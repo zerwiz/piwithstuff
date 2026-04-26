@@ -43,6 +43,8 @@ export interface ValidationIssue {
   message: string;
 }
 
+export type MemoryScope = "user" | "project" | "local";
+
 export type AgentStatusMap = {
   scout: 'online';
   planner: 'online';

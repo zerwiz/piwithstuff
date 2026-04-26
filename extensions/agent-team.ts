@@ -19,11 +19,14 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { Text, type AutocompleteItem, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { spawn } from "child_process";
-import { readdirSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
+import { readdirSync, readFileSync, existsSync, mkdirSync, unlinkSync, lstatSync } from "fs";
 import { join, resolve } from "path";
+import { homedir } from "os";
 import { applyExtensionDefaults } from "./themeMap.ts";
 
 // ── Types ────────────────────────────────────────
+
+type MemoryScope = "user" | "project" | "local";
 
 interface AgentDef {
 	name: string;
@@ -48,6 +51,98 @@ interface AgentState {
 }
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+// ── Memory Helpers ───────────────────────────────
+
+const MAX_MEMORY_LINES = 200;
+
+export function isUnsafeName(name: string): boolean {
+	if (!name || name.length > 128) return true;
+	return !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name);
+}
+
+export function isSymlink(filePath: string): boolean {
+	try {
+		return lstatSync(filePath).isSymbolicLink();
+	} catch {
+		return false;
+	}
+}
+
+export function safeReadFile(filePath: string): string | undefined {
+	if (!existsSync(filePath)) return undefined;
+	if (isSymlink(filePath)) return undefined;
+	try {
+		return readFileSync(filePath, "utf-8");
+	} catch {
+		return undefined;
+	}
+}
+
+export function resolveMemoryDir(agentName: string, scope: MemoryScope, cwd: string): string {
+	if (isUnsafeName(agentName)) {
+		throw new Error(`Unsafe agent name for memory directory: "${agentName}"`);
+	}
+	const key = agentName.toLowerCase().replace(/\s+/g, "-");
+	switch (scope) {
+		case "user":
+			return join(homedir(), ".pi", "agent-memory", key);
+		case "project":
+			return join(cwd, ".pi", "agent-memory", key);
+		case "local":
+			return join(cwd, ".pi", "agent-memory-local", key);
+	}
+}
+
+export function ensureMemoryDir(memoryDir: string): void {
+	if (existsSync(memoryDir)) {
+		if (isSymlink(memoryDir)) {
+			throw new Error(`Refusing to use symlinked memory directory: ${memoryDir}`);
+		}
+		return;
+	}
+	mkdirSync(memoryDir, { recursive: true });
+}
+
+export function readMemoryIndex(memoryDir: string): string | undefined {
+	if (isSymlink(memoryDir)) return undefined;
+	const memoryFile = join(memoryDir, "MEMORY.md");
+	const content = safeReadFile(memoryFile);
+	if (content === undefined) return undefined;
+
+	const lines = content.split("\n");
+	if (lines.length > MAX_MEMORY_LINES) {
+		return lines.slice(0, MAX_MEMORY_LINES).join("\n") + "\n... (truncated at 200 lines)";
+	}
+	return content;
+}
+
+export function buildMemoryBlock(agentName: string, scope: MemoryScope, cwd: string): string {
+	const memoryDir = resolveMemoryDir(agentName, scope, cwd);
+	ensureMemoryDir(memoryDir);
+	const existingMemory = readMemoryIndex(memoryDir);
+
+	const header = `# Agent Memory\n\nYou have a persistent memory directory at: ${memoryDir}/\nMemory scope: ${scope}\n\nThis memory persists across sessions. Use it to build up knowledge over time.`;
+	const memoryContent = existingMemory
+		? `\n\n## Current MEMORY.md\n${existingMemory}`
+		: `\n\nNo MEMORY.md exists yet. Create one at ${join(memoryDir, "MEMORY.md")} to start building persistent memory.`;
+
+	const instructions = `\n\n## Memory Instructions\n- MEMORY.md is an index file — keep it concise (under 200 lines).\n- Store detailed memories in separate files within ${memoryDir}/ and link to them from MEMORY.md.\n- Update or remove memories that become outdated.\n- You have Read, Write, and Edit tools available for managing memory files.`;
+
+	return header + memoryContent + instructions;
+}
+
+export function buildReadOnlyMemoryBlock(agentName: string, scope: MemoryScope, cwd: string): string {
+	const memoryDir = resolveMemoryDir(agentName, scope, cwd);
+	const existingMemory = readMemoryIndex(memoryDir);
+
+	const header = `# Agent Memory (read-only)\n\nMemory scope: ${scope}\nYou have read-only access to memory. You can reference existing memories but cannot modify them.`;
+	const memoryContent = existingMemory
+		? `\n\n## Current MEMORY.md\n${existingMemory}`
+		: `\n\nNo memory is available yet.`;
+
+	return header + memoryContent;
+}
 
 // ── Helpers ──────────────────────────────────────
 
@@ -192,6 +287,7 @@ export default function (pi: ExtensionAPI) {
 			if (!def) continue;
 			const key = def.name.toLowerCase().replace(/\s+/g, "-");
 			const sessionFile = join(sessionDir, `${key}.json`);
+			agentStates.get(def.name.toLowerCase());
 			agentStates.set(def.name.toLowerCase(), {
 				def,
 				status: "idle",
@@ -389,6 +485,13 @@ export default function (pi: ExtensionAPI) {
 		const agentKey = state.def.name.toLowerCase().replace(/\s+/g, "-");
 		const agentSessionFile = join(sessionDir, `${agentKey}.json`);
 
+		const hasWriteTools = state.def.tools.includes("write") || state.def.tools.includes("edit");
+		const memoryBlock = hasWriteTools
+			? buildMemoryBlock(state.def.name, "project", ctx.cwd)
+			: buildReadOnlyMemoryBlock(state.def.name, "project", ctx.cwd);
+
+		const combinedPrompt = state.def.systemPrompt + "\n\n" + memoryBlock;
+
 		const args = [
 			"--mode", "json",
 			"-p",
@@ -396,7 +499,7 @@ export default function (pi: ExtensionAPI) {
 			"--model", model,
 			"--tools", state.def.tools,
 			"--thinking", "low",
-			"--append-system-prompt", state.def.systemPrompt,
+			"--append-system-prompt", combinedPrompt,
 			"--session", agentSessionFile,
 		];
 
@@ -478,58 +581,216 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "dispatch_agent",
 		label: "Dispatch Agent",
-		description: "Dispatch a task to a specialist agent.",
+		description: "Dispatch a task to a specialist agent. The agent will execute the task and return the result. Use the system prompt to see available agent names.",
 		parameters: Type.Object({
-			agent: Type.String(),
-			task: Type.String(),
+			agent: Type.String({ description: "Agent name (case-insensitive)" }),
+			task: Type.String({ description: "Task description for the agent to execute" }),
 		}),
-		async execute(_id, params, _sig, onUpdate, ctx) {
-			const { agent, task } = params as any;
-			onUpdate?.({ content: [{ type: "text", text: `Dispatching to ${agent}...` }] });
-			const res = await dispatchAgent(agent, task, ctx);
-			return { content: [{ type: "text", text: res.output }] };
+
+		async execute(_toolCallId, params, _signal, onUpdate, ctx) {
+			const { agent, task } = params as { agent: string; task: string };
+
+			try {
+				if (onUpdate) {
+					onUpdate({
+						content: [{ type: "text", text: `Dispatching to ${agent}...` }],
+						details: { agent, task, status: "dispatching" },
+					});
+				}
+
+				const result = await dispatchAgent(agent, task, ctx);
+
+				const truncated = result.output.length > 8000
+					? result.output.slice(0, 8000) + "\n\n... [truncated]"
+					: result.output;
+
+				const status = result.exitCode === 0 ? "done" : "error";
+				const summary = `[${agent}] ${status} in ${Math.round(result.elapsed / 1000)}s`;
+
+				return {
+					content: [{ type: "text", text: `${summary}\n\n${truncated}` }],
+					details: {
+						agent,
+						task,
+						status,
+						elapsed: result.elapsed,
+						exitCode: result.exitCode,
+						fullOutput: result.output,
+					},
+				};
+			} catch (err: any) {
+				return {
+					content: [{ type: "text", text: `Error dispatching to ${agent}: ${err?.message || err}` }],
+					details: { agent, task, status: "error", elapsed: 0, exitCode: 1, fullOutput: "" },
+				};
+			}
 		},
+
 		renderCall(args, theme) {
-			return new Text(theme.fg("toolTitle", theme.bold("dispatch_agent ")) + theme.fg("accent", (args as any).agent), 0, 0);
-		}
+			const agentName = (args as any).agent || "?";
+			const task = (args as any).task || "";
+			const preview = task.length > 60 ? task.slice(0, 57) + "..." : task;
+			return new Text(
+				theme.fg("toolTitle", theme.bold("dispatch_agent ")) +
+				theme.fg("accent", agentName) +
+				theme.fg("dim", " — ") +
+				theme.fg("muted", preview),
+				0, 0,
+			);
+		},
+
+		renderResult(result, options, theme) {
+			const details = result.details as any;
+			if (!details) {
+				const text = result.content[0];
+				return new Text(text?.type === "text" ? text.text : "", 0, 0);
+			}
+
+			// Streaming/partial result while agent is still running
+			if (options.isPartial || details.status === "dispatching") {
+				return new Text(
+					theme.fg("accent", `● ${details.agent || "?"}`) +
+					theme.fg("dim", " working..."),
+					0, 0,
+				);
+			}
+
+			const icon = details.status === "done" ? "✓" : "✗";
+			const color = details.status === "done" ? "success" : "error";
+			const elapsed = typeof details.elapsed === "number" ? Math.round(details.elapsed / 1000) : 0;
+			const header = theme.fg(color, `${icon} ${details.agent}`) +
+				theme.fg("dim", ` ${elapsed}s`);
+
+			if (options.expanded && details.fullOutput) {
+				const output = details.fullOutput.length > 4000
+					? details.fullOutput.slice(0, 4000) + "\n... [truncated]"
+					: details.fullOutput;
+				return new Text(header + "\n" + theme.fg("muted", output), 0, 0);
+			}
+
+			return new Text(header, 0, 0);
+		},
 	});
 
 	pi.registerCommand("agents-team", {
-		description: "Select a team",
+		description: "Select a team to work with",
 		handler: async (_args, ctx) => {
 			widgetCtx = ctx;
 			const teamNames = Object.keys(teams);
-			const choice = await ctx.ui.select("Select Team", teamNames);
-			if (choice) {
-				activateTeam(choice);
-				updateWidget();
-				ctx.ui.setStatus("agent-team", `Team: ${choice}`);
+			if (teamNames.length === 0) {
+				ctx.ui.notify("No teams defined in .pi/agents/teams.yaml", "warning");
+				return;
 			}
-		}
+
+			const options = teamNames.map(name => {
+				const members = teams[name].map(m => displayName(m));
+				return `${name} — ${members.join(", ")}`;
+			});
+
+			const choice = await ctx.ui.select("Select Team", options);
+			if (choice === undefined) return;
+
+			const idx = options.indexOf(choice);
+			const name = teamNames[idx];
+			activateTeam(name);
+			updateWidget();
+			ctx.ui.setStatus("agent-team", `Team: ${name} (${agentStates.size})`);
+			ctx.ui.notify(`Team: ${name} — ${Array.from(agentStates.values()).map(s => displayName(s.def.name)).join(", ")}`, "info");
+		},
 	});
 
 	pi.registerCommand("agents-list", {
-		description: "List agents",
+		description: "List all loaded agents",
 		handler: async (_args, ctx) => {
-			const list = Array.from(agentStates.values()).map(s => `${displayName(s.def.name)}: ${s.status}`).join("\n");
-			ctx.ui.notify(list || "No agents", "info");
+			const list = Array.from(agentStates.values())
+				.map(s => `${displayName(s.def.name)} (${s.status}, runs: ${s.runCount}): ${s.def.description}`)
+				.join("\n");
+			ctx.ui.notify(list || "No agents loaded", "info");
 		}
 	});
 
 	// ── Session Hooks ────────────────────────────
 
-	pi.on("before_agent_start", async () => {
-		const catalog = Array.from(agentStates.values()).map(s => `### ${displayName(s.def.name)}\n${s.def.description}`).join("\n\n");
-		return { systemPrompt: `Dispatcher agent. Coordinate specialist agents.\n\n## Agents\n\n${catalog}` };
+	pi.on("before_agent_start", async (_event, _ctx) => {
+		// Build dynamic agent catalog from active team only
+		const agentCatalog = Array.from(agentStates.values())
+			.map(s => `### ${displayName(s.def.name)}\n**Dispatch as:** \`${s.def.name}\`\n${s.def.description}\n**Tools:** ${s.def.tools}`)
+			.join("\n\n");
+
+		const teamMembers = Array.from(agentStates.values()).map(s => displayName(s.def.name)).join(", ");
+
+		return {
+			systemPrompt: `You are a dispatcher agent. You coordinate specialist agents to accomplish tasks.
+You do NOT have direct access to the codebase. You MUST delegate all work through
+agents using the dispatch_agent tool.
+
+## Active Team: ${activeTeamName}
+Members: ${teamMembers}
+You can ONLY dispatch to agents listed below. Do not attempt to dispatch to agents outside this team.
+
+## How to Work
+- Analyze the user's request and break it into clear sub-tasks
+- Choose the right agent(s) for each sub-task
+- Dispatch tasks using the dispatch_agent tool
+- Review results and dispatch follow-up agents if needed
+- If a task fails, try a different agent or adjust the task description
+- Summarize the outcome for the user
+
+## Rules
+- NEVER try to read, write, or execute code directly — you have no such tools
+- ALWAYS use dispatch_agent to get work done
+- You can chain agents: use scout to explore, then builder to implement
+- You can dispatch the same agent multiple times with different tasks
+- Keep tasks focused — one clear objective per dispatch
+
+## Agents
+
+${agentCatalog}`,
+		};
 	});
 
 	pi.on("session_start", async (_ev, ctx) => {
 		applyExtensionDefaults(import.meta.url, ctx);
 		widgetCtx = ctx;
 		contextWindow = ctx.model?.contextWindow || 0;
+
+		// Wipe old agent session files so subagents start fresh
+		const sessDir = join(ctx.cwd, ".pi", "agent-sessions");
+		if (existsSync(sessDir)) {
+			for (const f of readdirSync(sessDir)) {
+				if (f.endsWith(".json")) {
+					try { unlinkSync(join(sessDir, f)); } catch {}
+				}
+			}
+		}
+
 		loadAgents(ctx.cwd);
 		if (Object.keys(teams).length > 0) activateTeam(Object.keys(teams)[0]);
+		
 		pi.setActiveTools(["dispatch_agent"]);
+		
+		ctx.ui.setStatus("agent-team", `Team: ${activeTeamName} (${agentStates.size})`);
 		updateWidget();
+
+		// Footer: model | team | context bar
+		ctx.ui.setFooter((_tui, theme, _footerData) => ({
+			dispose: () => {},
+			invalidate() {},
+			render(width: number): string[] {
+				const model = ctx.model?.id || "no-model";
+				const usage = ctx.getContextUsage();
+				const pct = usage ? usage.percent : 0;
+				const filled = Math.round(pct / 10);
+				const bar = "#".repeat(filled) + "-".repeat(10 - filled);
+
+				const left = theme.fg("dim", ` ${model}`) +
+					theme.fg("muted", " · ") +
+					theme.fg("accent", activeTeamName);
+				const right = theme.fg("dim", `[${bar}] ${Math.round(pct)}% `);
+				const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
+
+				return [truncateToWidth(left + pad + right, width)];
+			},
+		}));
 	});
 }

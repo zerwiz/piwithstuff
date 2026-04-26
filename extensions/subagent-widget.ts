@@ -21,6 +21,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { applyExtensionDefaults } from "./themeMap.ts";
+import { buildMemoryBlock } from "./memory.ts";
 
 interface SubState {
 	id: number;
@@ -138,6 +139,9 @@ export default function (pi: ExtensionAPI) {
 			? `${ctx.model.provider}/${ctx.model.id}`
 			: "openrouter/google/gemini-3-flash-preview";
 
+		const memoryBlock = buildMemoryBlock(`subagent-${state.id}`, "project", ctx.cwd);
+		const tools = "read,bash,grep,find,ls";
+
 		return new Promise<void>((resolve) => {
 			const proc = spawn("pi", [
 				"--mode", "json",
@@ -145,8 +149,9 @@ export default function (pi: ExtensionAPI) {
 				"--session", state.sessionFile,   // persistent session for /subcont resumption
 				"--no-extensions",
 				"--model", model,
-				"--tools", "read,bash,grep,find,ls",
+				"--tools", tools,
 				"--thinking", "off",
+				"--append-system-prompt", memoryBlock,
 				prompt,
 			], {
 				stdio: ["ignore", "pipe", "pipe"],
