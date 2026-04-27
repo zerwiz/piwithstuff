@@ -1,0 +1,59 @@
+scout:
+  name: scout
+  description: Fast recon and codebase exploration agent. Specialized in discovering file paths, configurations, and documentation storage locations across the agent system.
+  tools: read,grep,find,ls
+
+planner:
+  name: planner
+  description: Architecture and implementation planning
+  tools: read,grep,find,ls,write
+
+developer:
+  name: developer
+  description: Code implementation and editing agent
+  tools: read,write,edit,bash,grep,find,ls
+
+reviewer:
+  name: reviewer
+  description: Code review and quality assurance
+  tools: read,bash,grep,find,ls,write
+
+documenter:
+  name: documenter
+  description: Documentation creation and maintenance
+  tools: read,write,edit,grep,find,ls
+
+red-team:
+  name: red-team
+  description: Security testing and vulnerability assessment
+  tools: read,bash,grep,find,ls
+
+session-manager:
+  name: session-manager
+  description: Session tracking and management
+  tools: read,write,grep,find,ls
+
+frontendcoder:
+  name: frontendcoder
+  description: Frontend development specialist
+  tools: read,write,edit,bash,grep,find,ls
+
+bowser:
+  name: bowser
+  description: Browser automation and testing
+  tools: read,bash,grep,find,ls
+
+agentbuilder:
+  name: agentbuilder
+  description: Agent creation and configuration
+  tools: read,write,edit,grep,find,ls
+
+ext-builder:
+  name: ext-builder
+  description: Extension development specialist
+  tools: read,write,edit,bash,grep,find,ls
+
+skillbuilder:
+  name: skillbuilder
+  description: Skill creation and management
+  tools: read,write,edit,grep,find,ls
