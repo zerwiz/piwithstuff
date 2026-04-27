@@ -1184,9 +1184,11 @@ ${activeCatalog}
 ${fullCatalog}
 
 ## Operational Directives
-1. Delegate all requests via \`dispatch_agent\`.
-2. Ensure specialists have enough context to succeed.
-3. Manage rosters via \`manage_team\` as needed.
+1. Delegate specialist agent requests via \`dispatch_agent\` (for code analysis, implementation, review, etc.).
+2. Use orchestrator tools like \`list_teams\`, \`list_agents\`, and \`list_active_team\` for team management.
+3. Use \`save_memory\` to persist orchestrator's own knowledge and session notes.
+4. Ensure specialists have enough context to succeed.
+5. Manage rosters via \`manage_team\` as needed.
 `
     };
   });
