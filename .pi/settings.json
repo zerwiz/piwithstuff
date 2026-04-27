@@ -2,5 +2,15 @@
   "theme": "synthwave",
   "prompts": [
     "../.claude/commands"
+  ],
+  "packages": [
+    "npm:@samfp/pi-memory",
+    "npm:@mariozechner/pi-tui",
+    "npm:@mariozechner/pi-coding-agent",
+    "npm:@mariozechner/pi-ai",
+    "npm:@sinclair/typebox",
+    "npm:koffi",
+    "../package",
+    "npm:@kaiserlich-dev/pi-session-search"
   ]
 }
