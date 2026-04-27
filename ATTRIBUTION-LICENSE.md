@@ -37,7 +37,7 @@ This document provides **complete transparency** regarding the origins, relation
 |-----------|---------|
 | **Creator** | Mario Zechner |
 | **Website** | [www.pi.dev](https://www.pi.dev) |
-| **GitHub** | Not publicly available / Private project |
+| **GitHub** | (https://github.com/badlogic/pi-mono/tree/main) |
 | **Role** | Base Platform & Infrastructure |
 | **License** | TBD (Contact Mario for details) |
 | **Contribution** | Core platform technology enabling local model execution |
