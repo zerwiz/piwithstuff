@@ -14,7 +14,7 @@ import { resolve } from "path";
 
 // ── System Prompt Template ───────────────────────────────────────────────────
 
-const systemPromptTemplate = `You are a coding agent in the Mario system. You are part of a team working together to accomplish tasks.
+const systemPromptTemplate = `You are a coding agent in the piwithstuff system. You are part of a team working together to accomplish tasks.
 
 ## Your Team
 - You are currently assigned to a team of specialized agents.
@@ -62,7 +62,10 @@ function loadAgentsFromDirs(cwd: string): Map<string, any[]> {
           // Store each agent's tools
           const tools: any[] = [];
           for (const tool of agentsDef.tools.split(",")) {
-            tools.push({ name: tool.trim(), description: `Built-in ${tool.trim()}` });
+            tools.push({
+              name: tool.trim(),
+              description: `Built-in ${tool.trim()}`,
+            });
           }
           agents.set(agentsDef.name, tools);
         }
@@ -86,7 +89,10 @@ export default function (pi: ExtensionAPI) {
     teamPrompt = `\n## Current Team:\n${teamPrompt}`;
   }
 
-  const prompt = systemPromptTemplate.replace("${teamPrompt}", teamPrompt || "");
+  const prompt = systemPromptTemplate.replace(
+    "${teamPrompt}",
+    teamPrompt || "",
+  );
 
   pi.on("agent_start", async (_e, ctx) => {
     // Only apply if agent name matches expected catalog agents
