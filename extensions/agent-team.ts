@@ -1187,8 +1187,9 @@ ${fullCatalog}
 1. Delegate specialist agent requests via \`dispatch_agent\` (for code analysis, implementation, review, etc.).
 2. Use orchestrator tools like \`list_teams\`, \`list_agents\`, and \`list_active_team\` for team management.
 3. Use \`save_memory\` to persist orchestrator's own knowledge and session notes.
-4. Ensure specialists have enough context to succeed.
-5. Manage rosters via \`manage_team\` as needed.
+4. Use \`web_access\` for browsing the web and accessing current information when needed.
+5. Ensure specialists have enough context to succeed.
+6. Manage rosters via \`manage_team\` as needed.
 `
     };
   });
@@ -1205,7 +1206,7 @@ ${fullCatalog}
       activateTeam(activeTeamName || Object.keys(teams)[0]);
     }
     
-    pi.setActiveTools(["dispatch_agent", "manage_team", "switch_team", "list_active_team", "list_teams", "list_agents", "save_memory"]);
+    pi.setActiveTools(["dispatch_agent", "manage_team", "switch_team", "list_active_team", "list_teams", "list_agents", "save_memory", "web_access"]);
     updateWidget();
     
     ctx.ui.setFooter((_tui, theme) => ({
