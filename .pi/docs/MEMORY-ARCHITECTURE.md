@@ -1,585 +1,100 @@
-# Memory System Architecture
+# Memory System Architecture (v3.2.1)
 
-**Version:** 3.2.0  
-**Location:** `/extensions/agent-team.ts`, `/extensions/util/memory-tools.ts`, `/extensions/util/memory-export.ts`
+**Location:** `/extensions/agent-team.ts`, `/extensions/util/memory-export.ts`
 
 ---
 
 ## OVERVIEW
 
-The Memory System provides persistent storage for AI agent knowledge across multiple scopes and lifecycles. Memory is managed through the Agent Team extension and includes automated export/cleanup functionality.
+The Memory System provides persistent storage for AI agent knowledge. In version 3.2.1, the architecture was hardened to ensure **Strict Project Isolation**. Sub-agents are now physically prevented from mixing memories between different codebases.
 
-The system implements a **three-tier memory architecture**:
+### The "Reference, Not Prompt" Rule
+Memory is injected into agents as a **Static Knowledge Base**. Agents are instructed to use it for **Reference** (looking up old solutions that worked) rather than as active **Instructions**. This prevents "Prompt Pollution" where old tasks interfere with cuKey Improvements:
 
-1. **User Memory** (`~/.pi/agent-memory/`) - Persistent, gitignored, global across codebases
-2. **Project Memory** (`.pi/agent-memory/`) - Repository-specific knowledge  
-3. **Local Memory** (`.pi/agent-memory-local/`) - Dev overrides (not committed)
+   1. Project Isolation (The "No Mixing" Rule):
+       * Sub-agents now strictly use the .pi/agent-memory/ directory within your
+         current project.
+       * They are explicitly forbidden from looking at global user memory (~/.pi) by
+         default, ensuring that "Coder" in Project A never sees the secrets or history
+         of "Coder" in Project B.
+
+   2. Fixed the save_memory Bug:
+       * The save_memory tool was previously trying to use the "Tool Call ID" as an
+         agent name, which caused it to fail or save to the wrong place.
+       * I have rewritten it to correctly identify the active agent and append its
+         notes to the correct project-specific MEMORY.md.
+
+   3. Unique Identity for Sub-Agents:
+       * Each sub-agent (Scout, Coder, Reviewer, etc.) now has its own private memory
+         folder. They can reference their own history but cannot "oversee" each other
+         unless the orchestrator explicitly shares that info.
+
+   4. Reference vs. Instructions:
+       * I have updated the system prompt injection to ensure sub-agents treat their
+         memory as a Knowledge Base (Reference) rather than a set of Instructions
+         (Prompts). This prevents them from getting stuck in loops of old tasks.
+
+  How it works now:
+  When you call a sub-agent in agent-team.ts, it receives a prompt like this:
+  > ## Persistent Memory (RW)
+  > Location: /home/zerwiz/piwithstuff/.pi/agent-memory/coder/
+  > Scope: project
+  > Reference the primary index (MEMORY.md) below to find old solutions that worked if
+  things break in a new update.rrent objectives.
 
 ---
 
 ## STORAGE HIERARCHY
 
-```
-~/.pi/
-├── agent-memory/              # User scope (gitignored)
-│   └── <agent-name>/
-│       └── MEMORY.md          # Main memory index
-│
-├── .pi/
-│   └── agent-memory/          # Project scope (gitignored)
-│       └── <agent-name>/
-│           └── MEMORY.md
-│
-└── .pi/agent-sessions/         # Session state (temporary)
-    └── <agent-key>.json
-```
+The system enforces a **Project-First** hierarchy. Sub-agents are locked into the `project` scope to prevent cross-contamination.
+
+1.  **Project Memory (`.pi/agent-memory/`)**  
+    *   **Primary Scope.** All sub-agents (Scout, Coder, etc.) store their unique history here.
+    *   Committed to the repository (if not gitignored) to help teams share "known fixes."
+
+2.  **User Memory (`~/.pi/agent-memory/`)**  
+    *   **Secondary Scope.** Used for global "Agent Personas" and shared cross-project tips.
+    *   Sub-agents can read from here but are restricted from writing to it during project-specific tasks.
+
+3.  **Local Memory (`.pi/agent-memory-local/`)**  
+    *   **Override Scope.** Temporary developer-specific notes that are never committed.
 
 ---
 
-## PATH RESOLUTION
+## SUB-AGENT ISOLATION
 
-```typescript
-function resolveMemoryDir(agentName: string, scope: MemoryScope, cwd: string): string
+Each specialist called via `agent-team.ts` is assigned a unique, sanitized directory:
+```
+.pi/agent-memory/
+├── coder/
+│   └── MEMORY.md
+├── reviewer/
+│   └── MEMORY.md
+└── scout/
+    └── MEMORY.md
 ```
 
-**Scopes:**
-- `user` → `~/.pi/agent-memory/<agent-name>/MEMORY.md`
-- `project` → `.pi/agent-memory/<agent-name>/MEMORY.md`
-- `local` → `.pi/agent-memory-local/<agent-name>/MEMORY.md`
-
-**Implementation:**
-```typescript
-// agent-name is lowercased and sanitized
-// Prevents directory traversal attacks
-// Rejects symlinks via isSymlink()
-```
+### Path Resolution Logic
+The system sanitizes agent names (alphanumeric only) and resolves paths using absolute physical locations to prevent directory traversal or symlink exploits.
 
 ---
 
-## MEMORY TYPES
+## TOOL FUNCTIONALITY
 
-| Type | Capabilities | Use Case |
-|------|--------------|----------|
-| `read` | Reference only | Read-only agents, observation modes |
-| `write` | Create/modify | Agents with write/edit tools |
-| `readwrite` | Full CRUD | Recommended for project agents |
-
----
-
-## MEMORY TOOLS
-
-### Built-in Tools (memory-tools.ts)
-
-```typescript
-// memory-tools.ts exports
-export function registerMemoryTools(api: ExtensionAPI, agentName: string): MemoryToolDefinition[]
-```
-
-### Tool Definitions
-
-#### 1. memory_view
-```typescript
-name: 'memory_view'
-description: `View current memory for ${agentName || 'current agent'}`
-arguments: {
-  agentName: {
-    name: 'agentName',
-    type: 'string',
-    description: 'Agent name (optional, defaults to current)',
-    required: false
-  }
-}
-outputType: 'memory_view'
-outputDescription: 'Memory view with messages and tool usage'
-```
-
-#### 2. memory_export
-```typescript
-name: 'memory_export'
-description: `Export memory to ${['json', 'text', 'md'].join(', ')}`
-arguments: {
-  format: {
-    name: 'format',
-    type: 'string',
-    enum: ['json', 'text', 'md'],
-    description: 'Export format',
-    required: true
-  },
-  path: {
-    name: 'path',
-    type: 'string',
-    description: 'File path (optional)',
-    required: false
-  },
-  agentName: {
-    name: 'agentName',
-    type: 'string',
-    description: 'Agent name (optional)',
-    required: false
-  },
-  includeMetadata: {
-    name: 'includeMetadata',
-    type: 'boolean',
-    description: 'Include metadata'
-  },
-  includeToolDetails: {
-    name: 'includeToolDetails',
-    type: 'boolean',
-    description: 'Include tool details'
-  }
-}
-outputType: 'file|text'
-outputDescription: 'Memory export in specified format'
-```
-
-#### 3. memory_stats
-```typescript
-name: 'memory_stats'
-description: `Get memory statistics for ${agentName || 'agent'}`
-arguments: {
-  agentName: {
-    name: 'agentName',
-    type: 'string',
-    description: 'Agent name'
-  },
-  includeFiles: {
-    name: 'includeFiles',
-    type: 'boolean',
-    description: 'Include file counts'
-  }
-}
-outputType: 'json'
-outputDescription: 'Memory statistics'
-```
-
-#### 4. memory_export_file
-```typescript
-name: 'memory_export_file'
-description: `Export memory to file in ${['json', 'text', 'md'].join(', ')}`
-arguments: {
-  format: {
-    name: 'format',
-    type: 'string',
-    enum: ['json', 'text', 'md'],
-    description: 'Export format',
-    required: true
-  },
-  path: {
-    name: 'path',
-    type: 'string',
-    description: 'File path',
-    required: true
-  },
-  agentName: {
-    name: 'agentName',
-    type: 'string',
-    description: 'Agent name (optional)',
-    required: false
-  },
-  maxResults: {
-    name: 'maxResults',
-    type: 'number',
-    description: 'Max messages to export'
-  },
-  sinceDate: {
-    name: 'sinceDate',
-    type: 'date',
-    description: 'Export messages since this date'
-  }
-}
-outputType: 'file'
-outputDescription: 'Memory exported to file'
-```
+### `save_memory` (Project-Aware)
+The `save_memory` tool identifies the **calling agent** and automatically routes the data to that agent's specific project directory. 
+*   **Correct:** `coder` calls `save_memory` -> writes to `.pi/agent-memory/coder/MEMORY.md`.
+*   **Safety:** If an agent lacks "write" tools, the system automatically downgrades them to `Read-Only` memory blocks.
 
 ---
 
-## EXPORT SYSTEM
+## SECURITY & STABILITY
 
-### Export Functions (memory-export.ts)
-
-```typescript
-export function inspectMemory(agentSessions: Map<string, any>, agentName: string): MemoryView | null
-export async function exportToJSON(agentSessions, agentName, options): Promise<string>
-export async function exportToText(agentSessions, agentName): Promise<string>
-export async function exportToMD(agentSessions, agentName): Promise<string>
-export async function exportFiltered(agentSessions, agentName, filters): Promise<string>
-export async function exportStats(agentSessions, agentName): Promise<string>
-```
-
-### Export Options
-
-```typescript
-interface ExportOptions {
-  format: 'json' | 'text' | 'md';
-  includeMetadata?: boolean;                    // Add export timestamp, agent name, version
-  includeToolDetails?: boolean;                 // Add tool breakdown
-  maxResults?: number;                          // Limit messages in export
-  pretty?: boolean;                             // JSON indentation
-}
-```
-
-### Export Formats
-
-| Format | Use Case | Output |
-|--------|----------|--------|
-| JSON | Programmatic processing | `{...}` |
-| Text | CLI viewing | Plain text |
-| MD | Documentation | Markdown |
+-   **Symlink Guard:** Any attempt to use a symlink in a memory path results in an immediate security abort.
+-   **Context Clamping:** MEMORY.md files are clamped to **200 lines** to maintain LLM efficiency and prevent context window overflow.
+-   **Update Recovery:** If a Pi update changes tool behavior, agents reference their project memory to find the "Old Pattern" that worked, facilitating automated recovery.
 
 ---
 
-## MEMORY VIEW INTERFACE
-
-```typescript
-interface MemoryView {
-  agentName: string;
-  createdAt: Date;
-  lastActivity: Date;
-  messageCount: number;
-  totalTools: number;
-  successRate: number;
-  messages: any[];                              // Limited to 1000
-  toolUsage: ToolUsage[];
-  filesRead: File[];
-  filesCreated: File[];
-  sessionsCompleted: number;
-}
-```
-
----
-
-## MEMORY BUILDER FUNCTIONS
-
-### Write Memory Block
-
-```typescript
-/**
- * Constructs system-prompt block for agents with WRITE capability
- * Location: extensions/util/memory-export.ts
- */
-export function buildMemoryBlock(agentName: string, scope: MemoryScope, cwd: string): string
-```
-
-**Example System Prompt:**
-```
-## Persistent Memory (RW)
-Location: /path-to-memory/
-Scope: project
-
-You have a persistent knowledge base. The primary index (MEMORY.md)
-is provided below. You are required to maintain this memory as you
-learn new information about the codebase. Use your file tools
-(write/edit) to update MEMORY.md or create new files in the memory dir.
-
-### Current MEMORY.md
-{...MEMORY.md content...}
-```
-
-### Read-Only Memory Block
-
-```typescript
-/**
- * Constructs system-prompt block for agents with READ-ONLY capability
- */
-export function buildReadOnlyMemoryBlock(agentName: string, scope: MemoryScope, cwd: string): string
-```
-
-**Example System Prompt:**
-```
-## Persistent Memory (RO)
-Scope: project
-
-Reference the following specialist knowledge. You cannot modify these files.
-
-### Current MEMORY.md
-{...MEMORY.md content...} or
-No specialist memory available for reference.
-```
-
----
-
-## SESSION STATE
-
-Each active agent maintains state in:
-
-```
-.path/.pi/agent-sessions/{agent-key}.json
-```
-
-### Session Structure
-
-```typescript
-interface AgentState {
-  def: AgentDef;                    // Agent definition
-  status: 'idle' | 'running' | 'done' | 'error';
-  task: string;                     // Current task
-  toolCount: number;                // Tools used in session
-  elapsed: number;                  // Duration in ms
-  lastWork: string;                 // Latest output
-  lastThinking: string;             // Latest thinking block
-  currentMode: 'idle' | 'thinking' | 'working' | 'tool';
-  contextPct: number;               // Context window usage %
-  sessionFile: string | null;       // Path to session json
-  runCount: number;                 // Session count
-  activeTools: Set<string>;         // Currently active tools
-}
-```
-
----
-
-## MEMORY UPDATE PATTERNS
-
-### Pattern 1: Save to MEMORY.md
-
-```typescript
-// Appends timestamped entry
-const timestamp = new Date().toISOString().slice(0, 10);
-const entry = `\n\n## ${timestamp}\n${note}`;
-const updated = existing + entry;
-```
-
-### Pattern 2: Export for Review
-
-```bash
-pi -c memory-export:preview  # Preview before committing changes
-```
-
-### Pattern 3: Create New Files
-
-Agents can use `write` or `edit` tools to:
-- Create new markdown files in memory dir
-- Organize knowledge into subdirectories
-- Maintain structured knowledge bases
-
----
-
-## SECURITY & SAFETY
-
-### Input Validation
-
-```typescript
-function isUnsafeName(name: string): boolean
-```
-
-**Checks:**
-- Length limit (128 chars) → Prevents path traversal
-- Regex `/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/` → Allows only safe characters
-
-### Directory Safety
-
-- Rejects symbolic links via `isSymlink()` checks
-- Uses `lstatSync()` to verify non-symlink status
-- Throws clear error messages on security violations
-
-### Context Window Management
-
-```typescript
-const MAX_MEMORY_LINES = 200;
-
-if (lines.length > MAX_MEMORY_LINES) {
-  return lines.slice(0, MAX_MEMORY_LINES).join("\n") +
-         "\n... (Truncated for Context Window Efficiency)";
-}
-```
-
----
-
-## FILE MANAGEMENT
-
-### File Reading Tools
-
-```typescript
-export function getReadFiles(agentSessions, agentName): File[]
-```
-
-**Returns File array:**
-```typescript
-interface File {
-  name: string;
-  path: string;
-  tool: string;           // e.g., 'read', 'write', 'read_file'
-  content: string;        // First 1000 chars
-  message: Message;       // Usage in message history
-}
-```
-
-### File Creation Tools
-
-```typescript
-export function getCreatedFiles(agentSessions, agentName): File[]
-```
-
-**Returns Files created via write/edit tools:**
-```typescript
-interface File {
-  name: string;
-  path: string;
-  tool: 'write' | 'edit';
-  content: string;
-  message: Message;
-}
-```
-
----
-
-## USAGE EXAMPLES
-
-### CLI Commands
-
-```bash
-# View memory
-pi -c memory-view:coder
-
-# Export to JSON
-pi -c memory-export:json
-
-# Export to text
-pi -c memory-export:text
-
-# Export to markdown
-pi -c memory-export:md
-
-# Preview without writing
-pi -c memory-export:preview
-```
-
-### Programmatic Access
-
-```typescript
-// Import tools
-import { inspectMemory, exportToJSON, exportToMD } from './memory-export';
-
-// Inspect agent memory
-const memory = inspectMemory(agentSessions, 'coder');
-if (memory) {
-  console.log(`Memory created: ${memory.createdAt}`);
-  console.log(`Messages: ${memory.messageCount}`);
-  console.log(`Success rate: ${memory.successRate}%`);
-}
-
-// Export to JSON
-const json = await exportToJSON(agentSessions, 'coder');
-fs.writeFileSync('.pi/memory-export.json', json);
-
-// Export with filters
-const filtered = await exportFiltered(agentSessions, 'coder', {
-  agentName: 'coder',
-  maxResults: 100
-});
-```
-
----
-
-## ARCHITECTURE DIAGRAM
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     MEMORY SYSTEM ARCHITECTURE                           │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  📂 Storage Hierarchy                                                    │
-│     ├── ~/.pi/agent-memory/            ← Global user memory             │
-│     ├── .pi/agent-memory/              ← Project-specific memory        │
-│     └── .pi/agent-sessions/            ← Per-agent session state        │
-│                                                                          │
-│  🧠 Knowledge Base                                                       │
-│     └── MEMORY.md                  ← Primary index, append-only         │
-│                              └── Sub-files as needed                     │
-│                                                                          │
-│  🛠️  Agent Tools                                                         │
-│     ├── memory_view              → Inspect memory state                 │
-│     ├── memory_export            → Export memory content                 │
-│     ├── memory_stats             → Get memory statistics                 │
-│     └── memory_export_file       → Export to specific path               │
-│                                                                          │
-│  🔒 Security Measures                                                    │
-│     ├── Name validation              → Prevents path traversal           │
-│     └── Symlink rejection           → Prevents injection attacks        │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## IMPLEMENTATION
-
-### Memory Building System
-
-Location: `/extensions/util/memory-export.ts`
-
-**Exports:**
-```typescript
-function buildMemoryBlock(agentName: string, scope: MemoryScope, cwd: string): string
-function buildReadOnlyMemoryBlock(agentName: string, scope: MemoryScope, cwd: string): string
-function inspectMemory(agentSessions: Map<string, any>, agentName: string): MemoryView | null
-```
-
-### Memory Maintenance
-
-The memory system includes auto-cleanup:
-
-```typescript
-// Scheduled cleanup runs daily
-setInterval(async () => {
-  try {
-    await cleanupExports(7 * 24 * 60 * 60 * 1000); // Keep 7 days
-  } catch (error) {
-    console.warn("Memory cleanup skipped:", error);
-  }
-}, 24 * 60 * 60 * 1000);
-```
-
----
-
-## REFERENCES
-
-- [Agent Team Extension API](../extensions/AGENT-EXTENSION-ARCHITECTURE.md)
-- [Memory Tools Definition](./memory-tools.ts)
-- [Memory Export Functions](./memory-export.ts)
-
----
-
-**Last Updated:** 2026-04-27  
-**Maintained by:** Agent Team Extension
-
----
-
-## DOCUMENTATION NOTES
-
-### Accuracy
-
-✓ All file paths verified against actual implementation
-✓ All tool definitions match memory-tools.ts
-✓ All function signatures verified in memory-export.ts
-✓ Memory types (read/write/readwrite) documented
-✓ Session state structure complete
-✓ Export functions and options documented
-
-### Security
-
-✓ Path traversal prevention documented
-✓ Symlink rejection documented
-✓ Context window management documented
-
-### Usage
-
-The documentation provides:
-- Complete memory architecture overview
-- Storage hierarchy diagrams
-- Tool definitions with parameter details
-- Export function documentation
-- API usage examples
-- CLI command examples
-
-### Maintenance
-
-Documentation is maintained alongside implementation changes:
-- New tools → Updated tool definitions
-- New exports → Updated export functions
-- Security updates → Updated safety measures
-- Architecture changes → Updated diagrams
-
----
-
-**Generated:** 2026-04-27  
-**Verified:** Complete and accurate ✅
+**Last Updated:** April 2026  
+**Status:** ✅ Fully Implemented and Project-Isolated
