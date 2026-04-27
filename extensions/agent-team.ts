@@ -258,6 +258,28 @@ function wrapText(text: string, width: number): string[] {
 // ── Configuration Parsers ───────────────────────
 
 /**
+ * Robust YAML-lite parser for agents.yaml.
+ */
+function parseAgentsYaml(raw: string): Record<string, { name: string; description: string; tools: string }> {
+  const agents: Record<string, { name: string; description: string; tools: string }> = {};
+  let current: string | null = null;
+  for (const line of raw.split("\n")) {
+    if (line.trim() === "") continue;
+    const itemMatch = line.match(/^(\S[^:]*):$/);
+    if (itemMatch) {
+      current = itemMatch[1].trim();
+      agents[current] = { name: current, description: "", tools: "" };
+      continue;
+    }
+    const keyMatch = line.match(/^\s+(name|description|tools):\s*(.+)$/);
+    if (keyMatch && current) {
+      agents[current][keyMatch[1] as "name" | "description" | "tools"] = keyMatch[2].trim();
+    }
+  }
+  return agents;
+}
+
+/**
  * Robust YAML-lite parser for teams.yaml.
  */
 function parseTeamsYaml(raw: string): Record<string, string[]> {
@@ -520,17 +542,17 @@ export default function (pi: ExtensionAPI) {
     }
 
     const stats = parts.length > 0 ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}` : "";
-    const branch = isLastInList ? "└─" : "├─";
+    const prefixChar = isLastInList ? "└─" : "├─";
     
     const headerLine = truncateToWidth(
-      theme.fg("dim", branch) + " " + `${icon} ${theme.fg(nameColor, nameLabel)}  ${theme.fg("dim", descText)}`,
+      `${prefixChar} ${icon} ${theme.fg(nameColor, nameLabel)}  ${theme.fg("dim", descText)}`,
       safeWidth - visibleWidth(stats)
     ) + stats;
 
     const logRows: string[] = [];
     if (state.status === "running") {
-      const activityPrefix = isLastInList ? "   " : "│  ";
-      const contentWidth = safeWidth - 10;
+      const logIndent = isLastInList ? "   " : "│  ";
+      const contentWidth = Math.max(20, safeWidth - 10);
 
       let raw = "", color = "dim", prefix = "";
       if (state.activeTools.size > 0) {
@@ -559,9 +581,7 @@ export default function (pi: ExtensionAPI) {
       const visible = wrapped.slice(-8);
 
       for (let j = 0; j < visible.length; j++) {
-        const isLastLogLine = j === visible.length - 1;
-        const logBranch = isLastLogLine ? " ⎿ " : " │ ";
-        logRows.push(theme.fg("dim", activityPrefix) + theme.fg("dim", logBranch) + theme.fg(color, visible[j]));
+        logRows.push(theme.fg("dim", logIndent) + theme.fg(color, visible[j]));
       }
     }
 
@@ -588,16 +608,15 @@ function updateWidget() {
 
           const lines: string[] = [];
 
-          // Team Dashboard Header (Sticks to Top - orchestrator is the root)
+          // Team Dashboard Header (standalone - no branch)
           const headingLine = truncateToWidth(
-            theme.fg(running ? "accent" : "dim", "├─") + " " +
-            theme.fg(running ? "accent" : "dim", running ? "●" : "○") + " " +
-            theme.fg(running ? "accent" : "dim", `Team Orchestrator Context: ${activeTeamName}`),
+            theme.fg(running ? "accent" : "dim", "○") + " " +
+            theme.fg(running ? "accent" : "dim", `Team Orchestrator: ${activeTeamName}`),
             safeWidth
           );
           lines.push(headingLine);
 
-          // Assemble specialist blocks beneath the orchestrator (last gets └─)
+          // Assemble specialist blocks beneath the orchestrator
           const agents = Array.from(agentStates.values());
           for (let i = 0; i < agents.length; i++) {
             const isLast = i === agents.length - 1;
@@ -768,6 +787,81 @@ function updateWidget() {
   });
 
   pi.registerTool({
+    name: "list_teams",
+    label: "List Teams",
+    description: "List all teams from teams.yaml that can be switched to.",
+    parameters: Type.Object({}),
+    async execute(_id, _params, _sig, _upd, ctx) {
+      const teamsPath = join(ctx.cwd, ".pi", "agents", "teams.yaml");
+      const teamsContent = safeReadFile(teamsPath);
+      const teamsList = teamsContent ? parseTeamsYaml(teamsContent) : {};
+
+      let output = "### Teams\n";
+      if (Object.keys(teamsList).length > 0) {
+        for (const [team, members] of Object.entries(teamsList)) {
+          const marker = team === activeTeamName ? " **(active)**" : "";
+          output += `\n#### ${team}${marker}\nMembers: ${members.join(", ")}`;
+        }
+      } else {
+        output += "No teams defined.\n";
+      }
+
+      return { content: [{ type: "text", text: output }] };
+    },
+    renderCall: (_args, theme) =>
+      new Text(theme.fg("toolTitle", theme.bold("list_teams")) + theme.fg("dim", " (from teams.yaml)"), 0, 0),
+  });
+
+  pi.registerTool({
+    name: "list_agents",
+    label: "List Agents",
+    description: "List all agents from agents.yaml that can be loaded.",
+    parameters: Type.Object({}),
+    async execute(_id, _params, _sig, _upd, ctx) {
+      const agentsPath = join(ctx.cwd, ".pi", "agents", "agents.yaml");
+      const agentsContent = safeReadFile(agentsPath);
+      const activeMembers = teams[activeTeamName] || [];
+
+      let output = "### Agents\n";
+      if (agentsContent) {
+        const parsedAgents = parseAgentsYaml(agentsContent);
+        for (const [name, agent] of Object.entries(parsedAgents)) {
+          const inActive = activeMembers.includes(name) ? " ✓" : "";
+          output += `\n- **${name}**${inActive}\n  ${agent.description}\n  Tools: ${agent.tools}`;
+        }
+      } else {
+        output += "No agents defined.\n";
+      }
+
+      return { content: [{ type: "text", text: output }] };
+    },
+    renderCall: (_args, theme) =>
+      new Text(theme.fg("toolTitle", theme.bold("list_agents")) + theme.fg("dim", " (from agents.yaml)"), 0, 0),
+  });
+
+  pi.registerTool({
+    name: "list_active_team",
+    label: "List Active Team",
+    description: "List agents currently loaded in the active team.",
+    parameters: Type.Object({}),
+    async execute(_id, _params, _sig, _upd, _ctx) {
+      const members = Array.from(agentStates.values()).map(s => {
+        const model = s.def.model ? ` (${s.def.model})` : "";
+        return `- **${s.def.name}**${model} — ${s.def.description} [${s.status}]`;
+      }).join("\n");
+
+      return {
+        content: [{
+          type: "text",
+          text: `### Active Team: ${activeTeamName}\n\n${members || "No agents loaded."}`
+        }]
+      };
+    },
+    renderCall: (_args, theme) =>
+      new Text(theme.fg("toolTitle", theme.bold("list_active_team")) + theme.fg("dim", " (loaded agents)"), 0, 0),
+  });
+
+  pi.registerTool({
     name: "manage_team",
     label: "Manage Team",
     description: "Add or remove specialists from the active roster.",
@@ -847,6 +941,81 @@ function updateWidget() {
   });
 
   pi.registerTool({
+    name: "list_active_team",
+    label: "List Active Team",
+    description: "List agents currently loaded in the active team.",
+    parameters: Type.Object({}),
+    async execute(_id, _params, _sig, _upd, _ctx) {
+      const members = Array.from(agentStates.values()).map(s => {
+        const model = s.def.model ? ` (${s.def.model})` : "";
+        return `- **${s.def.name}**${model} — ${s.def.description} [${s.status}]`;
+      }).join("\n");
+
+      return {
+        content: [{
+          type: "text",
+          text: `### Active Team: ${activeTeamName}\n\n${members || "No agents loaded."}`
+        }]
+      };
+    },
+    renderCall: (_args, theme) =>
+      new Text(theme.fg("toolTitle", theme.bold("list_active_team")) + theme.fg("dim", " (loaded agents)"), 0, 0),
+  });
+
+  pi.registerTool({
+    name: "list_teams",
+    label: "List Teams",
+    description: "List all teams from teams.yaml that can be switched to.",
+    parameters: Type.Object({}),
+    async execute(_id, _params, _sig, _upd, ctx) {
+      const teamsPath = join(ctx.cwd, ".pi", "agents", "teams.yaml");
+      const teamsContent = safeReadFile(teamsPath);
+      const teamsList = teamsContent ? parseTeamsYaml(teamsContent) : {};
+
+      let output = "### Teams\n";
+      if (Object.keys(teamsList).length > 0) {
+        for (const [team, members] of Object.entries(teamsList)) {
+          const marker = team === activeTeamName ? " **(active)**" : "";
+          output += `\n#### ${team}${marker}\nMembers: ${members.join(", ")}`;
+        }
+      } else {
+        output += "No teams defined.\n";
+      }
+
+      return { content: [{ type: "text", text: output }] };
+    },
+    renderCall: (_args, theme) =>
+      new Text(theme.fg("toolTitle", theme.bold("list_teams")) + theme.fg("dim", " (from teams.yaml)"), 0, 0),
+  });
+
+  pi.registerTool({
+    name: "list_agents",
+    label: "List Agents",
+    description: "List all agents from agents.yaml that can be loaded.",
+    parameters: Type.Object({}),
+    async execute(_id, _params, _sig, _upd, ctx) {
+      const agentsPath = join(ctx.cwd, ".pi", "agents", "agents.yaml");
+      const agentsContent = safeReadFile(agentsPath);
+      const activeMembers = teams[activeTeamName] || [];
+
+      let output = "### Agents\n";
+      if (agentsContent) {
+        const parsedAgents = parseAgentsYaml(agentsContent);
+        for (const [name, agent] of Object.entries(parsedAgents)) {
+          const inActive = activeMembers.includes(name) ? " ✓" : "";
+          output += `\n- **${name}**${inActive}\n  ${agent.description}\n  Tools: ${agent.tools}`;
+        }
+      } else {
+        output += "No agents defined.\n";
+      }
+
+      return { content: [{ type: "text", text: output }] };
+    },
+    renderCall: (_args, theme) =>
+      new Text(theme.fg("toolTitle", theme.bold("list_agents")) + theme.fg("dim", " (from agents.yaml)"), 0, 0),
+  });
+
+  pi.registerTool({
     name: "list_team_agents",
     label: "List Team Agents",
     description: "List all agents in the active team with their tools.",
@@ -856,10 +1025,23 @@ function updateWidget() {
         const model = s.def.model ? ` (${s.def.model})` : "";
         return `### ${s.def.name}${model}\n- **Tools:** ${s.def.tools}\n- **Status:** ${s.status}`;
       }).join("\n\n");
+
+      let yamlInfo = "";
+      const teamsPath = join(ctx.cwd, ".pi", "agents", "teams.yaml");
+      const agentsPath = join(ctx.cwd, ".pi", "agents", "agents.yaml");
+      const teamsContent = safeReadFile(teamsPath);
+      const agentsContent = safeReadFile(agentsPath);
+
+      if (teamsContent || agentsContent) {
+        yamlInfo = "\n\n---\n### Teams & Agents YAML\n";
+        if (teamsContent) yamlInfo += `\n**teams.yaml:**\n\`\`\`yaml\n${teamsContent}\n\`\`\``;
+        if (agentsContent) yamlInfo += `\n**agents.yaml:**\n\`\`\`yaml\n${agentsContent}\n\`\`\``;
+      }
+
       return { 
         content: [{ 
           type: "text", 
-          text: `### Active Team: ${activeTeamName}\n\n${members || "No agents loaded."}` 
+          text: `### Active Team: ${activeTeamName}\n\n${members || "No agents loaded."}${yamlInfo}` 
         }] 
       };
     },
@@ -947,10 +1129,37 @@ function updateWidget() {
     }
   });
 
-  pi.registerCommand("agents-list", {
+   pi.registerCommand("agents-list", {
     description: "Registry of all specialists.",
     handler: async (_args, ctx) => {
       ctx.ui.notify(`### Global Registry\n\n${getAllAgentsCatalog(allAgentDefs)}`, "info");
+    }
+  });
+
+   pi.registerCommand("list-teams", {
+    description: "List all available teams",
+    handler: async (_args, ctx) => {
+      // Invoke the list_teams tool internally
+      const result = await pi.dispatchTool("list_teams", {});
+      ctx.ui.notify(result.content[0].text, "info");
+    }
+  });
+
+   pi.registerCommand("list-agents", {
+    description: "List all available agents", 
+    handler: async (_args, ctx) => {
+      // Invoke the list_agents tool internally
+      const result = await pi.dispatchTool("list_agents", {});
+      ctx.ui.notify(result.content[0].text, "info");
+    }
+  });
+
+   pi.registerCommand("list-active-team", {
+    description: "List currently loaded agents",
+    handler: async (_args, ctx) => {
+      // Invoke the list_active_team tool internally
+      const result = await pi.dispatchTool("list_active_team", {});
+      ctx.ui.notify(result.content[0].text, "info");
     }
   });
 
@@ -994,7 +1203,7 @@ ${fullCatalog}
       activateTeam(activeTeamName || Object.keys(teams)[0]);
     }
     
-    pi.setActiveTools(["dispatch_agent", "manage_team", "switch_team", "list_team_agents", "save_memory"]);
+    pi.setActiveTools(["dispatch_agent", "manage_team", "switch_team", "list_active_team", "list_teams", "list_agents", "save_memory"]);
     updateWidget();
     
     ctx.ui.setFooter((_tui, theme) => ({
