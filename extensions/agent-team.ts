@@ -20,6 +20,8 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { exportMemory, cleanupExports, listExportFormats } from "./util/memory-export";
+import { handleMemoryExport } from "./util/memory-tools";
 import { Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { spawn } from "child_process";
 import {
@@ -1376,6 +1378,79 @@ export default function (pi: ExtensionAPI) {
 
   // ── System Hook: High-Context Orchestration ──────────
 
+  pi.registerCommand("memory-export:json", {
+    description: "Export agent memory to JSON format",
+    handler: async (_args, ctx) => {
+      try {
+        const result = await exportMemory("json", ctx.cwd);
+        ctx.ui.log(`✅ Memory export initiated:
+  Format: JSON
+  Path: .pi/memory-export.json
+  Progress: ${result}
+
+View with: cat .pi/memory-export.json`);
+        // Cleanup old exports to prevent disk usage
+        await cleanupExports(7 * 24 * 60 * 60 * 1000);
+        return { content: [{ type: "text", text: "✅ Memory export complete" }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `❌ Export failed: ${error}` }] };
+      }
+    },
+  });
+
+  pi.registerCommand("memory-export:text", {
+    description: "Export agent memory to plaintext format",
+    handler: async (_args, ctx) => {
+      try {
+        const result = await exportMemory("text", ctx.cwd);
+        ctx.ui.log(`✅ Memory export to plaintext:
+  Format: Text
+  Path: .pi/memory-export.txt
+  Progress: ${result}
+
+View with: cat .pi/memory-export.txt`);
+        await cleanupExports(7 * 24 * 60 * 60 * 1000);
+        return { content: [{ type: "text", text: "✅ Memory export complete" }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `❌ Export failed: ${error}` }] };
+      }
+    },
+  });
+
+  pi.registerCommand("memory-export:md", {
+    description: "Export agent memory to markdown format",
+    handler: async (_args, ctx) => {
+      try {
+        const result = await exportMemory("md", ctx.cwd);
+        ctx.ui.log(`✅ Memory export to markdown:
+  Format: Markdown
+  Path: .pi/memory-export.md
+  Progress: ${result}
+
+View with: cat .pi/memory-export.md`);
+        await cleanupExports(7 * 24 * 60 * 60 * 1000);
+        return { content: [{ type: "text", text: "✅ Memory export complete" }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `❌ Export failed: ${error}` }] };
+      }
+    },
+  });
+
+  pi.registerCommand("memory-export:preview", {
+    description: "Preview memory export without writing to file",
+    handler: async (_args, ctx) => {
+      try {
+        const result = await exportMemory("preview", ctx.cwd);
+        ctx.ui.log(`👀 Memory Preview:
+${result}`);
+        return { content: [{ type: "text", text: "✅ Export preview shown" }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `❌ Preview failed: ${error}` }] };
+      }
+    },
+  });
+
+  // ── System Hook: High-Context Orchestration ───────
   pi.on("before_agent_start", async (_event, _ctx) => {
     const activeCatalog = Array.from(agentStates.values())
       .map(
@@ -1439,6 +1514,9 @@ ${fullCatalog}
       activateTeam(activeTeamName || Object.keys(teams)[0]);
     }
 
+    // Register memory export tools
+    const exportFormats = listExportFormats();
+    
     pi.setActiveTools([
       "dispatch_agent",
       "manage_team",
@@ -1448,6 +1526,7 @@ ${fullCatalog}
       "list_agents",
       "save_memory",
       "web_access",
+      ...exportFormats,
     ]);
     updateWidget();
 
