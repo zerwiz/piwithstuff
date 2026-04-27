@@ -329,7 +329,7 @@ sequenceDiagram
     participant Host2 as Host 2 (Model Pool B)
     participant Host3 as Host 3 (Model Pool C)
     
-    Client->>Link: Request (model, prompt)
+    Client-->>Link: Request (model, prompt)
     Link->>Link: Check routing config
     Note over Link: Select optimal host based on:
     Link->>Link: Model availability
@@ -337,11 +337,11 @@ sequenceDiagram
     Link->>Link: Active model status
     
     alt Best host = Host1
-        Link->>Host1: Route request
+        Link-->>Host1: Route request
         Host1-->>Link: Response
         Link-->>Client: Response
     else Best host = Host2
-        Link->>Host2: Route request
+        Link-->>Host2: Route request
         Host2-->>Link: Response
         Link-->>Client: Response
     end
