@@ -330,11 +330,12 @@ sequenceDiagram
     participant Host3 as Host 3 (Model Pool C)
     
     Client-->>Link: Request (model, prompt)
-    Link->>Link: Check routing config
-    Note over Link: Select optimal host based on:
-    Link->>Link: Model availability
-    Link->>Link: Host capacity
-    Link->>Link: Active model status
+    activate Link
+    Note right of Link: Check routing config
+    Note right of Link: Model availability
+    Note right of Link: Host capacity
+    Note right of Link: Active model status
+    deactivate Link
     
     alt Best host = Host1
         Link-->>Host1: Route request

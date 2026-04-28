@@ -20,7 +20,11 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { exportMemory, cleanupExports, listExportFormats } from "./util/memory-export";
+import {
+  exportMemory,
+  cleanupExports,
+  listExportFormats,
+} from "./util/memory-export";
 import { handleMemoryExport } from "./util/memory-tools";
 import { Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { spawn } from "child_process";
@@ -35,9 +39,7 @@ import {
 } from "fs";
 import { join, resolve } from "path";
 import { homedir } from "os";
-import { applyExtensionDefaults } from "./themeMap.ts";
-
-// ── Types & Interfaces ───────────────────────────
+import { applyExtensionDefaults } from "./themeMap";
 
 /**
  * Memory scopes define the persistence lifecycle of specialist knowledge.
@@ -57,6 +59,7 @@ interface AgentDef {
   tools: string;
   systemPrompt: string;
   file: string;
+  model: string;
 }
 
 /**
@@ -412,8 +415,9 @@ export default function (pi: ExtensionAPI) {
   let allAgentDefs: AgentDef[] = [];
   let teams: Record<string, string[]> = {};
   let activeTeamName = "";
-  let widgetCtx: any;
+  let widgetCtx: undefined;
   let sessionDir = "";
+
   let contextWindow = 0;
   let widgetFrame = 0;
   let globalInterval: ReturnType<typeof setInterval> | undefined;
@@ -767,8 +771,8 @@ export default function (pi: ExtensionAPI) {
       }
 
       let buffer = "";
-      proc.stdout!.setEncoding("utf-8");
-      proc.stdout!.on("data", (chunk: string) => {
+      proc.stdout.setEncoding("utf-8");
+      proc.stdout.on("data", (chunk: string) => {
         buffer += chunk;
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
@@ -809,7 +813,9 @@ export default function (pi: ExtensionAPI) {
                 (event.message.usage.input / contextWindow) * 100;
               updateWidget();
             }
-          } catch (e) {}
+          } catch (e) {
+            // unused but keep for safety
+          }
         }
       });
 
@@ -864,12 +870,16 @@ export default function (pi: ExtensionAPI) {
           content: [
             { type: "text", text: `Team ID "${teamName}" not defined.` },
           ],
+          details: [
+            { type: "text", text: `Team ID "${teamName}" not defined.` },
+          ],
         };
       activateTeam(teamName);
       updateWidget();
       ctx.ui.setStatus("agent-team", `Team: ${teamName}`);
       return {
         content: [{ type: "text", text: `Swapped to roster: "${teamName}".` }],
+        details: [{ type: "text", text: `Swapped to roster: "${teamName}".` }],
       };
     },
     renderCall: (args, theme) =>
@@ -901,7 +911,10 @@ export default function (pi: ExtensionAPI) {
         output += "No teams defined.\n";
       }
 
-      return { content: [{ type: "text", text: output }] };
+      return {
+        content: [{ type: "text", text: output }],
+        details: [{ type: "text", text: output }],
+      };
     },
     renderCall: (_args, theme) =>
       new Text(
@@ -933,7 +946,10 @@ export default function (pi: ExtensionAPI) {
         output += "No agents defined.\n";
       }
 
-      return { content: [{ type: "text", text: output }] };
+      return {
+        content: [{ type: "text", text: output }],
+        details: [{ type: "text", text: output }],
+      };
     },
     renderCall: (_args, theme) =>
       new Text(
@@ -949,16 +965,22 @@ export default function (pi: ExtensionAPI) {
     label: "List Active Team",
     description: "List agents currently loaded in the active team.",
     parameters: Type.Object({}),
-    async execute(_id, _params, _sig, _upd, _ctx) {
+    async execute(_id, params, _sig, _upd, _ctx) {
       const members = Array.from(agentStates.values())
         .map((s) => {
-          const model = s.def.model ? ` (${s.def.model})` : "";
+          const model = s.def.model || "" ? ` (${s.def.model})` : "";
           return `- **${s.def.name}**${model} — ${s.def.description} [${s.status}]`;
         })
         .join("\n");
 
       return {
         content: [
+          {
+            type: "text",
+            text: `### Active Team: ${activeTeamName}\n\n${members || "No agents loaded."}`,
+          },
+        ],
+        details: [
           {
             type: "text",
             text: `### Active Team: ${activeTeamName}\n\n${members || "No agents loaded."}`,
@@ -994,11 +1016,13 @@ export default function (pi: ExtensionAPI) {
         if (agentStates.has(key))
           return {
             content: [{ type: "text", text: `Specialist already active.` }],
-          };
+            details: [{ type: "text", text: `Specialist already active.` }],
+          } as AgentToolResult<unknown>;
         const def = allAgentDefs.find((d) => d.name.toLowerCase() === key);
         if (!def)
           return {
             content: [{ type: "text", text: `Specialist ID unknown.` }],
+            details: [{ type: "text", text: `Specialist ID unknown.` }],
           };
 
         const sess = join(
@@ -1030,6 +1054,9 @@ export default function (pi: ExtensionAPI) {
           content: [
             { type: "text", text: `Enlisted ${displayName(def.name)}.` },
           ],
+          details: [
+            { type: "text", text: `Enlisted ${displayName(def.name)}.` },
+          ],
         };
       } else {
         if (!agentStates.has(key))
@@ -1043,6 +1070,7 @@ export default function (pi: ExtensionAPI) {
         updateWidget();
         return {
           content: [{ type: "text", text: `Specialist decommissioned.` }],
+          details: [{ type: "text", text: `Specialist decommissioned.` }],
         };
       }
     },
@@ -1080,6 +1108,12 @@ export default function (pi: ExtensionAPI) {
             text: `### [${agent}] Task ${status}\n- **Duration:** ${Math.round(res.elapsed / 1000)}s\n\n**Output:**\n${res.output}`,
           },
         ],
+        details: [
+          {
+            type: "text",
+            text: `### [${agent}] Task ${status}\n- **Duration:** ${Math.round(res.elapsed / 1000)}s\n\n**Output:**\n${res.output}`,
+          },
+        ],
       };
     },
     renderCall: (args, theme) => {
@@ -1101,7 +1135,7 @@ export default function (pi: ExtensionAPI) {
     label: "List Active Team",
     description: "List agents currently loaded in the active team.",
     parameters: Type.Object({}),
-    async execute(_id, _params, _sig, _upd, _ctx) {
+    async execute(_id, params, _sig, _upd, _ctx) {
       const members = Array.from(agentStates.values())
         .map((s) => {
           const model = s.def.model ? ` (${s.def.model})` : "";
@@ -1111,6 +1145,12 @@ export default function (pi: ExtensionAPI) {
 
       return {
         content: [
+          {
+            type: "text",
+            text: `### Active Team: ${activeTeamName}\n\n${members || "No agents loaded."}`,
+          },
+        ],
+        details: [
           {
             type: "text",
             text: `### Active Team: ${activeTeamName}\n\n${members || "No agents loaded."}`,
@@ -1147,7 +1187,10 @@ export default function (pi: ExtensionAPI) {
         output += "No teams defined.\n";
       }
 
-      return { content: [{ type: "text", text: output }] };
+      return {
+        content: [{ type: "text", text: output }],
+        details: [{ type: "text", text: output }],
+      };
     },
     renderCall: (_args, theme) =>
       new Text(
@@ -1221,7 +1264,13 @@ export default function (pi: ExtensionAPI) {
         content: [
           {
             type: "text",
-            text: `### Active Team: ${activeTeamName}\n\n${members || "No agents loaded."}${yamlInfo}`,
+            text: `### [${agent}] Task ${status}\n- **Duration:** ${Math.round(res.elapsed / 1000)}s\n\n**Output:**\n${res.output}`,
+          },
+        ],
+        details: [
+          {
+            type: "text",
+            text: `### [${agent}] Task ${status}\n- **Duration:** ${Math.round(res.elapsed / 1000)}s\n\n**Output:**\n${res.output}`,
           },
         ],
       };
@@ -1255,6 +1304,9 @@ export default function (pi: ExtensionAPI) {
           content: [
             { type: "text", text: `This agent does not have write tools.` },
           ],
+          details: [
+            { type: "text", text: `This agent does not have write tools.` },
+          ],
         };
 
       const { note } = params as { note: string };
@@ -1271,10 +1323,12 @@ export default function (pi: ExtensionAPI) {
         writeFileSync(memoryFile, updated, "utf-8");
         return {
           content: [{ type: "text", text: `Memory saved to ${memoryFile}` }],
+          details: [{ type: "text", text: `Memory saved to ${memoryFile}` }],
         };
       } catch (e) {
         return {
           content: [{ type: "text", text: `Failed to save memory: ${e}` }],
+          details: [{ type: "text", text: `Failed to save memory: ${e}` }],
         };
       }
     },
@@ -1361,9 +1415,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("list-agents", {
     description: "List all available agents",
     handler: async (_args, ctx) => {
-      // Invoke the list_agents tool internally
-      const result = await pi.dispatchTool("list_agents", {});
-      ctx.ui.notify(result.content[0].text, "info");
+      ctx.ui.notify(`### Agents\n`, "info");
     },
   });
 
@@ -1383,17 +1435,17 @@ export default function (pi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       try {
         const result = await exportMemory("json", ctx.cwd);
-        ctx.ui.log(`✅ Memory export initiated:
-  Format: JSON
-  Path: .pi/memory-export.json
-  Progress: ${result}
-
-View with: cat .pi/memory-export.json`);
+        ctx.ui.notify(
+          `✅ Memory export initiated:\n  Format: JSON\n  Path: .pi/memory-export.json\n  Progress: ${result}\n\nView with: cat .pi/memory-export.json`,
+          "info",
+        );
         // Cleanup old exports to prevent disk usage
         await cleanupExports(7 * 24 * 60 * 60 * 1000);
-        return { content: [{ type: "text", text: "✅ Memory export complete" }] };
+        return {
+          content: [{ type: "text", text: "✅ Memory export complete" }],
+        };
       } catch (error) {
-        return { content: [{ type: "text", text: `❌ Export failed: ${error}` }] };
+        ctx.ui.notify(`❌ Export failed: ${error}`, "error");
       }
     },
   });
@@ -1403,16 +1455,16 @@ View with: cat .pi/memory-export.json`);
     handler: async (_args, ctx) => {
       try {
         const result = await exportMemory("text", ctx.cwd);
-        ctx.ui.log(`✅ Memory export to plaintext:
-  Format: Text
-  Path: .pi/memory-export.txt
-  Progress: ${result}
-
-View with: cat .pi/memory-export.txt`);
+        ctx.ui.notify(
+          `✅ Memory export to plaintext:\n  Format: Text\n  Path: .pi/memory-export.txt\n  Progress: ${result}\n\nView with: cat .pi/memory-export.txt`,
+          "info",
+        );
         await cleanupExports(7 * 24 * 60 * 60 * 1000);
-        return { content: [{ type: "text", text: "✅ Memory export complete" }] };
+        return {
+          content: [{ type: "text", text: "✅ Memory export complete" }],
+        };
       } catch (error) {
-        return { content: [{ type: "text", text: `❌ Export failed: ${error}` }] };
+        ctx.ui.notify(`❌ Export failed: ${error}`, "error");
       }
     },
   });
@@ -1429,9 +1481,13 @@ View with: cat .pi/memory-export.txt`);
 
 View with: cat .pi/memory-export.md`);
         await cleanupExports(7 * 24 * 60 * 60 * 1000);
-        return { content: [{ type: "text", text: "✅ Memory export complete" }] };
+        return {
+          content: [{ type: "text", text: "✅ Memory export complete" }],
+        };
       } catch (error) {
-        return { content: [{ type: "text", text: `❌ Export failed: ${error}` }] };
+        return {
+          content: [{ type: "text", text: `❌ Export failed: ${error}` }],
+        };
       }
     },
   });
@@ -1441,11 +1497,11 @@ View with: cat .pi/memory-export.md`);
     handler: async (_args, ctx) => {
       try {
         const result = await exportMemory("preview", ctx.cwd);
-        ctx.ui.log(`👀 Memory Preview:
-${result}`);
-        return { content: [{ type: "text", text: "✅ Export preview shown" }] };
+        ctx.ui.notify(`👀 Memory Preview:\n${result}`, "info");
       } catch (error) {
-        return { content: [{ type: "text", text: `❌ Preview failed: ${error}` }] };
+        return {
+          content: [{ type: "text", text: `❌ Preview failed: ${error}` }],
+        };
       }
     },
   });
@@ -1516,7 +1572,7 @@ ${fullCatalog}
 
     // Register memory export tools
     const exportFormats = listExportFormats();
-    
+
     pi.setActiveTools([
       "dispatch_agent",
       "manage_team",
@@ -1533,7 +1589,10 @@ ${fullCatalog}
     ctx.ui.setFooter((_tui, theme) => ({
       render(width: number): string[] {
         const usage = ctx.getContextUsage();
-        const pct = usage ? usage.percent : 0;
+        const pct =
+          usage && usage.percent !== null && usage.percent !== undefined
+            ? usage.percent
+            : 0;
         const bar =
           "#".repeat(Math.round(pct / 10)) +
           "-".repeat(10 - Math.round(pct / 10));

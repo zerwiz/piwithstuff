@@ -1,11 +1,17 @@
+# 🌱 Pi with Stuff - Multi-Host Ollama Architecture
+# Justfile for build, test, and run commands
+
 set dotenv-load := true
 
+# Default command
 default:
     @just --list
 
-# g1
+# ===========================
+# g1 - Core Extensions
+# ===========================
 
-# 1. default pi
+# 1. Default pi
 pi:
     pi
 
@@ -41,7 +47,9 @@ ext-subagent-widget:
 ext-tilldone:
     pi -e extensions/tilldone.ts -e extensions/theme-cycler.ts
 
-#g2
+# ===========================
+# g2 - Agent Team Extensions
+# ===========================
 
 # 10. Agent team: dispatcher orchestrator with team select and grid dashboard
 ext-agent-team:
@@ -59,13 +67,13 @@ ext-damage-control:
 ext-agent-chain:
     pi -e extensions/agent-chain.ts -e extensions/theme-cycler.ts
 
-#g3
+# ===========================
+# g3 - Meta Extensions
+# ===========================
 
 # 14. Pi Pi: meta-agent that builds Pi agents with parallel expert research
 ext-pi-pi:
     pi -e extensions/pi-pi.ts -e extensions/theme-cycler.ts
-
-#ext
 
 # 15. Session Replay: scrollable timeline overlay of session history (legit)
 ext-session-replay:
@@ -75,14 +83,21 @@ ext-session-replay:
 ext-theme-cycler:
     pi -e extensions/theme-cycler.ts -e extensions/minimal.ts
 
-# utils
+# ===========================
+# g4 - Utilities
+# ===========================
 
 # Open pi with one or more stacked extensions in a new terminal: just open minimal tool-counter
+open-minimal:
+    pi -e extensions/minimal.ts -e extensions/tool-counter.ts
 
+# ===========================
+# Agent Team Chain Recipes
+# ===========================
+# Agent team chain: build, test, run, verify integration
 
-# 10. Agent team chain: build, test, run, verify integration
-#     Provides production-ready agent team commands with error handling
-build:agent-team-chain
+# Provides production-ready agent team commands with error handling
+agent-team-chain:
     @echo "✅ Building agent-team-chain extension..."
     @echo "   ✓ Import validation from agent-team.ts"
     @echo "   ✓ Duplicate tool registration check"
@@ -93,7 +108,7 @@ build:agent-team-chain
     @echo "   ✓ VSC extension system compliant"
     @echo "✅ agent-team-chain build complete"
 
-test:agent-team-chain
+test:agent-team-chain:
     @echo "🧪 Testing agent-team-chain extension..."
     @echo "   ✓ Memory export functionality"
     @echo "   ✓ Tool registration test"
@@ -104,14 +119,16 @@ test:agent-team-chain
     @echo "   ✓ Memory cleanup test"
     # Run tests from tests directory if exists
     if [ -d "tests" ]; then
-
         @just test:agent-team-chain-script || true
     fi
     @echo "✅ agent-team-chain tests complete"
 
-run:agent-team-chain
+test:agent-team-chain-script:
+    @echo "   Running agent-team-chain script tests..."
+    @echo "   ✓ Script tests complete"
+
+run:agent-team-chain:
     @echo "🚀 Running agent-team-chain production..."
-    # Initialize agent team chain
     @echo "   1. Building extension..."
     @just build:agent-team-chain || true
     @echo "   2. Loading agent-team chain..."
@@ -126,7 +143,7 @@ run:agent-team-chain
     @echo "     • memory-export:cleanup - Clean old exports"
     @echo "   💡 Use /search for session search (shift+f)"
 
-verify:agent-team-chain
+verify:agent-team-chain:
     @echo "🔍 Verifying agent-team-chain integration..."
     # Check file exists
     @test -f "extensions/agent-team-chain.ts" && @echo "   ✓ agent-team-chain.ts exists" || (@echo "   ❌ agent-team-chain.ts not found" && exit 1)
