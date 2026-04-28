@@ -20,7 +20,11 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { exportMemory, cleanupExports, listExportFormats } from "./util/memory-export";
+import {
+  exportMemory,
+  cleanupExports,
+  listExportFormats,
+} from "./util/memory-export";
 import { handleMemoryExport } from "./util/memory-tools";
 import { Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { spawn } from "child_process";
@@ -57,6 +61,7 @@ interface AgentDef {
   tools: string;
   systemPrompt: string;
   file: string;
+  model?: string;
 }
 
 /**
@@ -864,12 +869,14 @@ export default function (pi: ExtensionAPI) {
           content: [
             { type: "text", text: `Team ID "${teamName}" not defined.` },
           ],
+          details: {},
         };
       activateTeam(teamName);
       updateWidget();
       ctx.ui.setStatus("agent-team", `Team: ${teamName}`);
       return {
         content: [{ type: "text", text: `Swapped to roster: "${teamName}".` }],
+        details: {},
       };
     },
     renderCall: (args, theme) =>
@@ -901,7 +908,10 @@ export default function (pi: ExtensionAPI) {
         output += "No teams defined.\n";
       }
 
-      return { content: [{ type: "text", text: output }] };
+      return {
+        content: [{ type: "text", text: output }],
+        details: {},
+      };
     },
     renderCall: (_args, theme) =>
       new Text(
@@ -933,7 +943,10 @@ export default function (pi: ExtensionAPI) {
         output += "No agents defined.\n";
       }
 
-      return { content: [{ type: "text", text: output }] };
+      return {
+        content: [{ type: "text", text: output }],
+        details: {},
+      };
     },
     renderCall: (_args, theme) =>
       new Text(
@@ -964,6 +977,7 @@ export default function (pi: ExtensionAPI) {
             text: `### Active Team: ${activeTeamName}\n\n${members || "No agents loaded."}`,
           },
         ],
+        details: {},
       };
     },
     renderCall: (_args, theme) =>
@@ -1116,6 +1130,7 @@ export default function (pi: ExtensionAPI) {
             text: `### Active Team: ${activeTeamName}\n\n${members || "No agents loaded."}`,
           },
         ],
+        details: {},
       };
     },
     renderCall: (_args, theme) =>
@@ -1391,9 +1406,9 @@ export default function (pi: ExtensionAPI) {
 View with: cat .pi/memory-export.json`);
         // Cleanup old exports to prevent disk usage
         await cleanupExports(7 * 24 * 60 * 60 * 1000);
-        return { content: [{ type: "text", text: "✅ Memory export complete" }] };
+        ctx.ui.log(`✅ Memory export complete`);
       } catch (error) {
-        return { content: [{ type: "text", text: `❌ Export failed: ${error}` }] };
+        ctx.ui.log(`❌ Export failed: ${error}`);
       }
     },
   });
@@ -1410,9 +1425,9 @@ View with: cat .pi/memory-export.json`);
 
 View with: cat .pi/memory-export.txt`);
         await cleanupExports(7 * 24 * 60 * 60 * 1000);
-        return { content: [{ type: "text", text: "✅ Memory export complete" }] };
+        ctx.ui.log(`✅ Memory export complete`);
       } catch (error) {
-        return { content: [{ type: "text", text: `❌ Export failed: ${error}` }] };
+        ctx.ui.log(`❌ Export failed: ${error}`);
       }
     },
   });
@@ -1429,9 +1444,9 @@ View with: cat .pi/memory-export.txt`);
 
 View with: cat .pi/memory-export.md`);
         await cleanupExports(7 * 24 * 60 * 60 * 1000);
-        return { content: [{ type: "text", text: "✅ Memory export complete" }] };
+        ctx.ui.log(`✅ Memory export complete`);
       } catch (error) {
-        return { content: [{ type: "text", text: `❌ Export failed: ${error}` }] };
+        ctx.ui.log(`❌ Export failed: ${error}`);
       }
     },
   });
@@ -1443,9 +1458,9 @@ View with: cat .pi/memory-export.md`);
         const result = await exportMemory("preview", ctx.cwd);
         ctx.ui.log(`👀 Memory Preview:
 ${result}`);
-        return { content: [{ type: "text", text: "✅ Export preview shown" }] };
+        ctx.ui.log(`✅ Export preview shown`);
       } catch (error) {
-        return { content: [{ type: "text", text: `❌ Preview failed: ${error}` }] };
+        ctx.ui.log(`❌ Preview failed: ${error}`);
       }
     },
   });
@@ -1516,7 +1531,7 @@ ${fullCatalog}
 
     // Register memory export tools
     const exportFormats = listExportFormats();
-    
+
     pi.setActiveTools([
       "dispatch_agent",
       "manage_team",
@@ -1533,7 +1548,7 @@ ${fullCatalog}
     ctx.ui.setFooter((_tui, theme) => ({
       render(width: number): string[] {
         const usage = ctx.getContextUsage();
-        const pct = usage ? usage.percent : 0;
+        const pct = usage ? usage.percent : 0 || 0;
         const bar =
           "#".repeat(Math.round(pct / 10)) +
           "-".repeat(10 - Math.round(pct / 10));

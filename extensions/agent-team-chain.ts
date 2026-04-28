@@ -1,11 +1,11 @@
 /**
  * Agent Team Chain Extension - VSC Extension System
- * 
+ *
  * This extension enables agent team functionality with memory,
  * team management, and cleanup capabilities.
- * 
+ *
  * @module agent-team-chain
- * @author ZeroWiz Extension System
+ * @author ZerWiz Extension System
  */
 
 import * as fs from "fs";
@@ -66,7 +66,7 @@ function handleError<T extends Error = Error>(
 ): void {
   console.error(`❌ [${context}]:`, error?.message || error);
   exportErrorCount++;
-  
+
   // Reset after 5 errors
   if (exportErrorCount > 5) {
     console.log("⚠️  Too many errors, resetting error count.");
@@ -80,7 +80,7 @@ function isMemoryAvailable(): boolean {
     const stat = fs.statSync(".pi/memory-export.json") as fs.Stats;
     const currentSize = stat.size;
     const memory = activeMemoryKey;
-    
+
     return memory && currentSize < defaultConfig.maxMemorySize;
   } catch {
     // Memory export not found - assume available
@@ -96,7 +96,7 @@ async function cleanupMemory(
   try {
     const now = Date.now();
     const retentionMs = retentionDays * 24 * 60 * 60 * 1000;
-    
+
     // Remove exports older than retention period
     for await (const file of fs.readdirSync(".pi")) {
       if (file.match(/memory-export/i)) {
@@ -111,15 +111,15 @@ async function cleanupMemory(
         }
       }
     }
-    
+
     // Check overall memory usage
     const memory = await pi.getCurrentMemory();
     const memorySize = JSON.stringify(memory).length;
-    
+
     if (memorySize > maxSizeMB * 1024 * 1024) {
       console.log(`⚠️  Memory usage at ${memorySize} bytes (max: ${maxSizeMB * 1024 * 1024})`);
     }
-    
+
   } catch (error) {
     handleError(error, "Memory cleanup");
   }
@@ -136,13 +136,13 @@ async function exportMemorySafe(
       console.log(`⚠️  Max exports (${maxExports}) reached, skipping this one`);
       return;
     }
-    
+
     // Ensure memory is available
     if (!isMemoryAvailable()) {
       console.log("⚠️  Memory not available for export");
       return;
     }
-    
+
     // Load memory and export
     const memory = await pi.getCurrentMemory();
     const exportContent = {
@@ -153,15 +153,15 @@ async function exportMemorySafe(
     };
 
     await pi.writeFile(outputPath, JSON.stringify(exportContent, null, 2));
-    
+
     exportCount++;
     lastMemoryExport = new Date();
-    
+
     console.log(
       `✅ Memory exported to ${outputPath} ` +
       `(Export #${exportCount}/${maxExports})`
     );
-    
+
   } catch (error) {
     handleError(error, "Memory export");
   }
@@ -172,7 +172,7 @@ function registerTools(): void {
   try {
     // Get available export formats
     const formats = listExportFormats();
-    
+
     // Register memory export tools
     activeToolsList = [
       ...activeToolsList,
@@ -181,9 +181,9 @@ function registerTools(): void {
       "memory-export:md",
       "memory-export:preview",
     ];
-    
+
     console.log(`🔧 Registered ${activeToolsList.length} tools`);
-    
+
   } catch (error) {
     handleError(error, "Tool registration");
   }
@@ -193,17 +193,17 @@ function registerTools(): void {
 async function initializeExtension(teamName: string = activeTeamName): Promise<void> {
   try {
     console.log(`🔧 Initializing agent-team-chain extension...`);
-    
+
     // Declare all variables first
     teams.push(teamName);
     activeTeamName = teamName;
-    
+
     // Initialize agent team
     await initialize();
-    
+
     // Set active tools (no duplicates)
     registerTools();
-    
+
     // Setup cleanup interval
     setInterval(async () => {
       try {
@@ -212,14 +212,14 @@ async function initializeExtension(teamName: string = activeTeamName): Promise<v
         handleError(error, "Cleanup");
       }
     }, cleanupIntervalMs);
-    
+
     // Ensure export directory exists
     await pi.ensureDirectory(".pi");
     await pi.ensureDirectory(".pi/notebooks");
     await pi.ensureDirectory(".pi/backups");
-    
+
     console.log(`✅ Extension initialized for team: ${activeTeamName}`);
-    
+
   } catch (error) {
     handleError(error, "Extension init");
   }
@@ -232,19 +232,19 @@ async function switchTeam(
 ): Promise<boolean> {
   try {
     const previousTeam = activeTeamName;
-    
+
     if (!teams.includes(newTeamName)) {
       console.log(`⚠️  Team '${newTeamName}' not found in registered teams`);
       return false;
     }
-    
+
     activeTeamName = newTeamName;
     console.log(`🔄 Switched to team: ${activeTeamName}`);
-    
+
     if (!retainMemory) {
       await cleanupMemory();
     }
-    
+
     return true;
   } catch (error) {
     console.log(`❌ Team switch failed: ${error}`);
@@ -261,13 +261,13 @@ async function initializeMemory(
     if (!memoryKey) {
       memoryKey = activeTeamName;
     }
-    
+
     await pi.ensureDirectory(".pi");
-    
+
     // Check if memory file exists
     const filePath = `.pi/${memoryKey}.mem`;
     const exists = fs.existsSync(filePath);
-    
+
     if (!exists) {
       // Create empty memory file
       await pi.writeFile(filePath, "{}", { atomic: true });
@@ -275,7 +275,7 @@ async function initializeMemory(
     } else {
       console.log(`📄 Memory file exists: ${filePath}`);
     }
-    
+
   } catch (error) {
     handleError(error, "Memory init");
   }
@@ -288,10 +288,10 @@ export async function handleAgentTeamExport(
 ): Promise<string> {
   try {
     console.log(`📤 Exporting team ${key} memory in ${format} format...`);
-    
+
     // Export memory
     await exportMemorySafe(format, `.pi/${key}.memory.${format === "json" ? "json" : "md"}`);
-    
+
     return `✅ Team ${key} exported to .pi/${key}.memory.md\n`;
   } catch (error) {
     console.log(`❌ Export failed: ${error}`);
@@ -306,7 +306,7 @@ export async function exportAllTeams(
 ): Promise<void> {
   try {
     console.log(`📦 Exporting all team states to: ${outputPath}`);
-    
+
     const export = {
       timestamp: new Date().toISOString(),
       teams: teams.map((team) => ({
@@ -316,10 +316,10 @@ export async function exportAllTeams(
       config: TeamConfig,
       exportCount,
     };
-    
+
     await pi.writeFile(outputPath, JSON.stringify(export, null, 2));
     console.log(`✅ All teams exported to ${outputPath}`);
-    
+
   } catch (error) {
     handleError(error, "All teams export");
   }
@@ -373,7 +373,7 @@ function checkExtensionStatus(): {
   try {
     // Check if extension is valid
     const exists = fs.existsSync("./agent-team.ts");
-    
+
     return {
       available: exists && teams.length > 0,
       version: "1.0.0",
@@ -394,18 +394,18 @@ function checkExtensionStatus(): {
 export function shutdown(): void {
   try {
     console.log("🛡️  Agent team extension shutting down...");
-    
+
     // Final memory cleanup
     cleanupMemory(20, 7);
-    
+
     // Reset state
     activeTeamName = "agent";
     exportCount = 0;
-    
+
   } catch (error) {
     handleError(error, "Shutdown cleanup");
   }
-  
+
   console.log("✅ Agent team extension closed");
 }
 
@@ -442,10 +442,10 @@ export async function exportMemories(
     if (!key) {
       key = activeTeamName;
     }
-    
+
     console.log(`📤 Exporting memory for team: ${key} (format: ${format})...`);
     await exportMemorySafe(format, `.pi/${key}.memory.${format === "json" ? "json" : "md"}`);
-    
+
     return true;
   } catch (error) {
     handleError(error, "Export memories");
@@ -470,31 +470,31 @@ export default async function exportMemoriesCommand(
       console.log("✅ Cleanup complete");
       return;
     }
-    
+
     // Export based on format
     const format = options?.format || "json";
     const key = options?.key || activeTeamName;
-    
+
     // Check extension status first
     const status = checkExtensionStatus();
     if (!status.available) {
       throw new Error("Agent team extension is not available");
     }
-    
+
     // Export memory
     await exportMemories(key, format);
-    
+
     // Verify the export was successful
     const exportPath = `.pi/${key}.memory.${format}`;
     const exists = fs.existsSync(exportPath);
-    
+
     if (!exists) {
       console.log(`❌ Export file not found at: ${exportPath}`);
       return;
     }
-    
+
     console.log(`✅ Memory exported successfully to: ${exportPath}`);
-    
+
     // Show file info
     if (status.available && key) {
       try {
@@ -507,10 +507,10 @@ export default async function exportMemoriesCommand(
         // Ignore stat errors
       }
     }
-    
+
   } catch (error) {
     handleError(error, "Export command");
-    
+
     // Default message
     console.log(`💡 Try running: \`pi memory-export:json\``);
   }
