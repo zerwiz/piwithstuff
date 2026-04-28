@@ -1,3 +1,47 @@
+---
+agent: scout
+name: scout
+description: Fast recon and codebase exploration agent. Specialized in discovering file paths, configurations, and documentation storage locations across the agent system.
+models:
+  - gpt-4-turbo-preview
+  - gpt-3.5-turbo
+  - o1-preview
+  - claude-3-5-sonnet-20240620
+  - gemini-1.5-pro
+  - mistral-large
+  - phi-3-medium-vision
+  - llama-3
+  - command-r-plus
+  - deepseek-v2-0725
+  - grok-
+  - palm2
+  - qwen2.5-coder
+  - xai-grover
+  - deep-hybrid-v1.1
+  - llama3.1-instruct-405b
+  - llama3.2-vision
+  - llama3.3
+  - mistral-large2411
+  - mixtral-8x25b
+  - mixtral-8x7b
+  - phi-3.5-mini
+  - phi-3-medium
+  - gemma2-9b-it
+  - llava
+  - llama-vision
+  - qwen2-vl
+  - qwq32b
+  - gemma
+  - gpt-2
+tools:
+  - write
+  - find
+  - grep
+  - read
+  - edit
+  - shell
+---
+
 ## Scout Agent
 
 ### Role
