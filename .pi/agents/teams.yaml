@@ -7,7 +7,6 @@ main:
   - developer
   - reviewer
   - documenter
-  - red-team
   - session-manager # NEW: Session management
   - bowser
 
@@ -30,6 +29,7 @@ frontend:
   - reviewer
   - bowser
   - session-manager # NEW: Frontend session management
+  - developer
 
 pi-pi:
   - ext-expert
